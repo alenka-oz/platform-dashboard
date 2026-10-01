@@ -22,27 +22,51 @@ st.markdown("---")
 DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD75RfNHsz8YOz4L_dFIq4m7SFvAUWu45SKqw2aHRRiwCWjR1pQhx67LLFKEdsNqqWM-A/pub?output=csv"
 
 # ============================================================
+# ФУНКЦИЯ ПАРСИНГА ДАТЫ
+# ============================================================
+def parse_date(val):
+    """Парсит даты в формате ДД.ММ.ГГГГ или ДД/ММ/ГГ."""
+    val = str(val).strip()
+    if val in ["nan", "NaT", "", "None", "Операционный день"]:
+        return pd.NaT
+    
+    # Пробуем формат ДД.ММ.ГГГГ
+    if "." in val:
+        try:
+            return pd.to_datetime(val, format="%d.%m.%Y")
+        except:
+            pass
+    
+    # Пробуем формат ДД/ММ/ГГ или ММ/ДД/ГГ
+    parts = val.split("/")
+    if len(parts) == 3:
+        try:
+            a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
+            year = 2000 + c if c < 100 else c
+            if a > 12:
+                day, month = a, b
+            elif b > 12:
+                month, day = a, b
+            else:
+                day, month = a, b
+            return pd.Timestamp(year=year, month=month, day=day)
+        except:
+            pass
+    
+    return pd.NaT
+
+# ============================================================
 # ФУНКЦИЯ ОЧИСТКИ ЧИСЕЛ
 # ============================================================
-def clean_number(val, is_percent=False):
-    """Очищает строку от форматирования и конвертирует в число.
-    
-    Примеры:
-    "12 960,00" -> 12960.0
-    "98,00%" -> 98.0 (если is_percent=False) или 0.98 (если is_percent=True)
-    "" -> NaN
-    """
+def clean_number(val):
+    """Очищает строку от форматирования и конвертирует в число."""
     if pd.isna(val):
         return float('nan')
     
     s = str(val).strip()
     
-    if s in ["", "nan", "None", "—", "-", "None.1"]:
+    if s in ["", "nan", "None", "—", "-", "Сумма", "Производ"]:
         return float('nan')
-    
-    # Убираем знак процента (если есть)
-    if "%" in s:
-        s = s.replace("%", "").strip()
     
     # Убираем пробелы (тысячные разделители)
     s = s.replace(" ", "")
@@ -51,63 +75,34 @@ def clean_number(val, is_percent=False):
     s = s.replace(",", ".")
     
     try:
-        num = float(s)
-        # Если это процент и нужно конвертировать в долю
-        if is_percent and "%" in str(val):
-            num = num / 100
-        return num
+        return float(s)
     except:
         return float('nan')
-
-
-# ============================================================
-# ФУНКЦИЯ ПАРСИНГА ДАТЫ
-# ============================================================
-def parse_date(val):
-    """Парсит даты: 28/09/26 (ДД/ММ/ГГ) и 9/28/26 (ММ/ДД/ГГ)."""
-    val = str(val).strip()
-    if val in ["nan", "NaT", "", "None", "Операционный день", "login", "площадка"]:
-        return pd.NaT
-    
-    parts = val.replace(".", "/").split("/")
-    if len(parts) != 3:
-        return pd.NaT
-    
-    try:
-        a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
-    except:
-        return pd.NaT
-    
-    # Год (26 -> 2026)
-    year = 2000 + c if c < 100 else c
-    
-    # Определяем формат: если первый элемент > 12, это ДД/ММ/ГГ
-    # Если второй элемент > 12, это ММ/ДД/ГГ
-    if a > 12:
-        day, month = a, b  # ДД/ММ/ГГ
-    elif b > 12:
-        month, day = a, b  # ММ/ДД/ГГ
-    else:
-        # Неоднозначно — предполагаем ДД/ММ/ГГ
-        day, month = a, b
-    
-    try:
-        return pd.Timestamp(year=year, month=month, day=day)
-    except:
-        return pd.NaT
-
 
 # ============================================================
 # ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ
 # ============================================================
 @st.cache_data(ttl=300)
 def load_data(url):
-    """Загружает данные из CSV и правильно обрабатывает форматирование."""
+    """Загружает данные из CSV."""
     try:
         # 1. Загрузка CSV
         df = pd.read_csv(url, encoding='utf-8')
         
-        # 2. Берём первые 5 колонок и переименовываем
+        # ОТЛАДКА: показываем структуру
+        st.sidebar.markdown("### 🔍 Отладка")
+        st.sidebar.write(f"**Всего строк:** {len(df)}")
+        st.sidebar.write(f"**Колонки:** {list(df.columns)}")
+        st.sidebar.write(f"**Количество колонок:** {len(df.columns)}")
+        
+        # 2. Если колонок больше 5, значит числа с запятой разбили строки
+        # Нужно объединить колонки правильно
+        if len(df.columns) > 5:
+            st.sidebar.warning(f"⚠️ Найдено {len(df.columns)} колонок вместо 5. Возможно, числа с запятой разбили строки.")
+            # Берём первые 5 колонок
+            df = df.iloc[:, :5].copy()
+        
+        # 3. Переименовываем колонки
         if len(df.columns) >= 5:
             df = df.iloc[:, :5].copy()
             df.columns = ["date", "login", "sum", "production", "platform"]
@@ -115,38 +110,27 @@ def load_data(url):
             st.error(f"Недостаточно колонок: {len(df.columns)}")
             return None, None
         
-        # 3. Парсим даты
+        # 4. Парсим даты
         df["date"] = df["date"].apply(parse_date)
-        
-        # 4. ФИЛЬТРУЕМ: оставляем только строки с валидной датой
         df = df.dropna(subset=["date"])
         
-        # 5. КРИТИЧНО: Очищаем числа от форматирования!
-        # Сумма — обычное число
-        df["sum"] = df["sum"].apply(lambda x: clean_number(x, is_percent=False))
-        # Производ — может быть в процентах (98,00%) или в долях (0.98)
-        df["production"] = df["production"].apply(lambda x: clean_number(x, is_percent=False))
-        
-        # Заменяем NaN на 0 для сумм
-        df["sum"] = df["sum"].fillna(0)
+        # 5. Очищаем числа
+        df["sum"] = df["sum"].apply(clean_number)
+        df["production"] = df["production"].apply(clean_number)
         
         # 6. Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
-        df = df[df["platform"] != "nan"]  # Удаляем пустые площадки
+        df = df[df["platform"] != "nan"]
         
-        # 7. Агрегация: один сотрудник + одна дата + одна площадка = одна строка
-        # СУММА СУММИРУЕТСЯ, производство берём среднее (или первое непустое)
-        def get_production(x):
-            """Берёт среднее непустых значений производства."""
-            non_nan = x.dropna()
-            if len(non_nan) > 0:
-                return non_nan.mean()
-            return 0.0
-        
+        # 7. Агрегация
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
-            sum=("sum", "sum"),  # СУММИРУЕМ все суммы для одного сотрудника за день
-            production=("production", get_production)  # Среднее производство
+            sum=("sum", "sum"),
+            production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0)
         ).copy()
+        
+        st.sidebar.success(f"✅ Загружено {len(df_agg)} записей")
+        st.sidebar.write(f"**Общая сумма:** {df_agg['sum'].sum():,.2f} ₽")
+        st.sidebar.write(f"**Средний производ:** {df_agg['production'].mean():.3f}")
         
         return df, df_agg
     except Exception as e:
@@ -236,7 +220,7 @@ df_filtered = df_agg[
     (df_agg["login"].isin(selected_logins))
 ].copy()
 
-st.sidebar.success(f"✅ Записей: {len(df_filtered)}")
+st.sidebar.success(f"✅ Записей после фильтрации: {len(df_filtered)}")
 
 # ============================================================
 # БЛОК 1: KPI КАРТОЧКИ
@@ -260,7 +244,7 @@ st.markdown("---")
 # ============================================================
 # БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ
 # ============================================================
-st.subheader("🏢 Средний производ по площадкам")
+st.subheader(" Средний производ по площадкам")
 
 platform_stats = df_filtered.groupby("platform").agg(
     avg_production=("production", "mean"),
@@ -285,7 +269,7 @@ st.plotly_chart(fig_platform, use_container_width=True)
 # ============================================================
 # БЛОК 3: ДИНАМИКА ПО ДНЯМ
 # ============================================================
-st.subheader("📅 Динамика среднего производства по дням")
+st.subheader(" Динамика среднего производства по дням")
 
 daily_platform = df_filtered.groupby(["date", "platform"])["production"].mean().reset_index()
 
@@ -367,7 +351,7 @@ with col_top_sum:
     st.dataframe(top_sum, use_container_width=True, hide_index=True)
 
 with col_top_prod:
-    st.subheader(" Топ-10 по производству")
+    st.subheader("🏆 Топ-10 по производству")
     top_prod = employee_stats.nlargest(10, "avg_production")[["login", "platform", "avg_production"]]
     st.dataframe(top_prod, use_container_width=True, hide_index=True)
 
@@ -375,7 +359,7 @@ with col_top_prod:
 # БЛОК 7: ПОЛНАЯ ТАБЛИЦА
 # ============================================================
 st.markdown("---")
-st.subheader("📋 Полная таблица данных")
+st.subheader(" Полная таблица данных")
 
 with st.expander("Показать все данные"):
     display_df = df_filtered.sort_values(["date", "platform", "login"]).copy()
