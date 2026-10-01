@@ -84,38 +84,34 @@ def load_and_clean_data(source_type, source_value):
 
 
 # ============================================================
-# БОКОВАЯ ПАНЕЛЬ: ВЫБОР ИСТОЧНИКА ДАННЫХ
+# АВТОМАТИЧЕСКАЯ ЗАГРУЗКА ИЗ GOOGLE SHEETS
 # ============================================================
-st.sidebar.header("📥 Источник данных")
+DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD75RfNHsz8YOz4L_dFIq4m7SFvAUWu45SKqw2aHRRiwCWjR1pQhx67LLFKEdsNqqWM-A/pub?output=csv"
 
-source_type = st.sidebar.radio(
-    "Выберите источник:",
-    ["Google Sheets (CSV-ссылка)", "Excel файл"],
-    index=1
-)
+@st.cache_data(ttl=300)
+def load_data_from_sheets():
+    """Загружает данные из Google Sheets по умолчанию."""
+    return load_and_clean_data("Google Sheets (CSV-ссылка)", DEFAULT_CSV_URL)
 
-df_raw = None
-df_agg = None
+# Пробуем загрузить автоматически
+df_raw, df_agg = load_data_from_sheets()
 
-if source_type == "Google Sheets (CSV-ссылка)":
-    st.sidebar.markdown("""
-    **Как получить ссылку:**
-    1. Откройте Google Таблицу
-    2. Файл → Поделиться → Опубликовать в интернете
-    3. Выберите формат **CSV**
-    4. Скопируйте ссылку
-    """)
-    sheet_url = st.sidebar.text_input("Вставьте CSV-ссылку:")
-    if sheet_url:
-        df_raw, df_agg = load_and_clean_data(source_type, sheet_url)
-
-elif source_type == "Excel файл":
-    uploaded_file = st.sidebar.file_uploader(
-        "Загрузите Excel файл",
-        type=["xlsx", "xls"]
+if df_raw is None or df_agg is None:
+    st.sidebar.header("📥 Источник данных")
+    source_type = st.sidebar.radio(
+        "Выберите источник:",
+        ["Google Sheets (CSV-ссылка)", "Excel файл"],
+        index=0
     )
-    if uploaded_file:
-        df_raw, df_agg = load_and_clean_data(source_type, uploaded_file)
+    
+    if source_type == "Google Sheets (CSV-ссылка)":
+        sheet_url = st.sidebar.text_input("Вставьте CSV-ссылку:", value=DEFAULT_CSV_URL)
+        if sheet_url:
+            df_raw, df_agg = load_and_clean_data(source_type, sheet_url)
+    elif source_type == "Excel файл":
+        uploaded_file = st.sidebar.file_uploader("Загрузите Excel файл", type=["xlsx", "xls"])
+        if uploaded_file:
+            df_raw, df_agg = load_and_clean_data(source_type, uploaded_file)
 
 
 # ============================================================
