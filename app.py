@@ -31,7 +31,7 @@ def clean_number(val):
     
     s = str(val).strip()
     
-    if s in ["", "nan", "None", "—", "-", "None.1"]:
+    if s in ["", "nan", "None", "—", "-", "None.1", "Сумма", "Производ"]:
         return float('nan')
     
     # Убираем пробелы (тысячные разделители)
@@ -47,65 +47,76 @@ def clean_number(val):
 
 
 # ============================================================
+# ФУНКЦИЯ ПАРСИНГА ДАТЫ
+# ============================================================
+def parse_date(val):
+    """Парсит даты: 28/09/26 (ДД/ММ/ГГ) и 9/28/26 (ММ/ДД/ГГ)."""
+    val = str(val).strip()
+    if val in ["nan", "NaT", "", "None", "Операционный день", "login", "площадка"]:
+        return pd.NaT
+    
+    parts = val.replace(".", "/").split("/")
+    if len(parts) != 3:
+        return pd.NaT
+    
+    try:
+        a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
+    except:
+        return pd.NaT
+    
+    # Год (26 -> 2026)
+    year = 2000 + c if c < 100 else c
+    
+    # Определяем формат: если первый элемент > 12, это ДД/ММ/ГГ
+    # Если второй элемент > 12, это ММ/ДД/ГГ
+    if a > 12:
+        day, month = a, b  # ДД/ММ/ГГ
+    elif b > 12:
+        month, day = a, b  # ММ/ДД/ГГ
+    else:
+        # Неоднозначно — предполагаем ДД/ММ/ГГ
+        day, month = a, b
+    
+    try:
+        return pd.Timestamp(year=year, month=month, day=day)
+    except:
+        return pd.NaT
+
+
+# ============================================================
 # ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ
 # ============================================================
 @st.cache_data(ttl=300)
 def load_data(url):
-    """Загружает данные из CSV."""
+    """Загружает данные из CSV и фильтрует только валидные строки."""
     try:
         # 1. Загрузка CSV
         df = pd.read_csv(url, encoding='utf-8')
         
-        # 2. Удаляем дубли шапок и разделители
-        if len(df.columns) > 0:
-            first_col = df.iloc[:, 0].astype(str).str.strip()
-            mask_headers = (first_col == "Операционный день") & (df.index > 0)
-            mask_separators = first_col.str.contains(r'^---+', na=False, regex=True)
-            df = df[~(mask_headers | mask_separators)].copy()
-        
-        # 3. Переименовываем колонки
+        # 2. Берём первые 5 колонок и переименовываем
         if len(df.columns) >= 5:
             df = df.iloc[:, :5].copy()
             df.columns = ["date", "login", "sum", "production", "platform"]
+        else:
+            st.error(f"Недостаточно колонок: {len(df.columns)}")
+            return None, None
         
-        # 4. Приводим даты
-        def parse_date(val):
-            val = str(val).strip()
-            if val in ["nan", "NaT", "", "None"]:
-                return pd.NaT
-            parts = val.replace(".", "/").split("/")
-            if len(parts) != 3:
-                return pd.NaT
-            try:
-                a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
-            except:
-                return pd.NaT
-            year = 2000 + c if c < 100 else c
-            if a > 12:
-                day, month = a, b
-            elif b > 12:
-                month, day = a, b
-            else:
-                day, month = a, b
-            try:
-                return pd.Timestamp(year=year, month=month, day=day)
-            except:
-                return pd.NaT
-        
+        # 3. Парсим даты
         df["date"] = df["date"].apply(parse_date)
+        
+        # 4. ФИЛЬТРУЕМ: оставляем только строки с валидной датой
+        # Это автоматически удалит строки-шапки и разделители
         df = df.dropna(subset=["date"])
         
-        # 5. Очищаем числа (КРИТИЧНО!)
+        # 5. Очищаем числа
         df["sum"] = df["sum"].apply(clean_number)
         df["production"] = df["production"].apply(clean_number)
         
-        # Заменяем NaN на 0 для сумм
-        df["sum"] = df["sum"].fillna(0)
-        
         # 6. Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
+        df = df[df["platform"] != "nan"]  # Удаляем пустые площадки
         
-        # 7. Агрегация
+        # 7. Агрегация: один сотрудник + одна дата + одна площадка
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
             production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0)
@@ -130,7 +141,7 @@ if df_raw is None or df_agg is None:
 # ============================================================
 # БОКОВАЯ ПАНЕЛЬ: ФИЛЬТРЫ
 # ============================================================
-st.sidebar.header("📅 Фильтры")
+st.sidebar.header(" Фильтры")
 
 min_date = df_agg["date"].min()
 max_date = df_agg["date"].max()
@@ -325,12 +336,12 @@ st.plotly_chart(fig_scatter, use_container_width=True)
 col_top_sum, col_top_prod = st.columns(2)
 
 with col_top_sum:
-    st.subheader("🏆 Топ-10 по сумме")
+    st.subheader(" Топ-10 по сумме")
     top_sum = employee_stats.nlargest(10, "total_sum")[["login", "platform", "total_sum"]]
     st.dataframe(top_sum, use_container_width=True, hide_index=True)
 
 with col_top_prod:
-    st.subheader(" Топ-10 по производству")
+    st.subheader("🏆 Топ-10 по производству")
     top_prod = employee_stats.nlargest(10, "avg_production")[["login", "platform", "avg_production"]]
     st.dataframe(top_prod, use_container_width=True, hide_index=True)
 
@@ -349,7 +360,7 @@ with st.expander("Показать все данные"):
 
     csv = display_df.to_csv(index=False, sep=";").encode("utf-8-sig")
     st.download_button(
-        "⬇️ Скачать отфильтрованные данные (CSV)",
+        "️ Скачать отфильтрованные данные (CSV)",
         data=csv,
         file_name="dashboard_export.csv",
         mime="text/csv"
