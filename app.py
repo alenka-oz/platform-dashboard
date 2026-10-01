@@ -211,16 +211,16 @@ selected_platforms = st.sidebar.multiselect(
 )
 
 all_logins = sorted(df_agg["login"].unique())
-search_login = st.sidebar.text_input("🔎 Поиск сотрудника:", "")
+search_login = st.sidebar.text_input(" Поиск сотрудника:", "")
 if search_login:
     filtered_logins = [l for l in all_logins if search_login.lower() in l.lower()]
 else:
     filtered_logins = all_logins
 
 selected_logins = st.sidebar.multiselect(
-    "👤 Сотрудник:",
+    " Сотрудник:",
     options=filtered_logins,
-    default=filtered_logins[:50]
+    default=filtered_logins  # ✅ ИСПРАВЛЕНО: выбираем ВСЕХ сотрудников
 )
 
 df_filtered = df_agg[
