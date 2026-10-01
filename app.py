@@ -24,15 +24,25 @@ DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD7
 # ============================================================
 # ФУНКЦИЯ ОЧИСТКИ ЧИСЕЛ
 # ============================================================
-def clean_number(val):
-    """Очищает строку от форматирования и конвертирует в число."""
+def clean_number(val, is_percent=False):
+    """Очищает строку от форматирования и конвертирует в число.
+    
+    Примеры:
+    "12 960,00" -> 12960.0
+    "98,00%" -> 98.0 (если is_percent=False) или 0.98 (если is_percent=True)
+    "" -> NaN
+    """
     if pd.isna(val):
         return float('nan')
     
     s = str(val).strip()
     
-    if s in ["", "nan", "None", "—", "-", "None.1", "Сумма", "Производ"]:
+    if s in ["", "nan", "None", "—", "-", "None.1"]:
         return float('nan')
+    
+    # Убираем знак процента (если есть)
+    if "%" in s:
+        s = s.replace("%", "").strip()
     
     # Убираем пробелы (тысячные разделители)
     s = s.replace(" ", "")
@@ -41,7 +51,11 @@ def clean_number(val):
     s = s.replace(",", ".")
     
     try:
-        return float(s)
+        num = float(s)
+        # Если это процент и нужно конвертировать в долю
+        if is_percent and "%" in str(val):
+            num = num / 100
+        return num
     except:
         return float('nan')
 
@@ -88,7 +102,7 @@ def parse_date(val):
 # ============================================================
 @st.cache_data(ttl=300)
 def load_data(url):
-    """Загружает данные из CSV и фильтрует только валидные строки."""
+    """Загружает данные из CSV и правильно обрабатывает форматирование."""
     try:
         # 1. Загрузка CSV
         df = pd.read_csv(url, encoding='utf-8')
@@ -105,21 +119,33 @@ def load_data(url):
         df["date"] = df["date"].apply(parse_date)
         
         # 4. ФИЛЬТРУЕМ: оставляем только строки с валидной датой
-        # Это автоматически удалит строки-шапки и разделители
         df = df.dropna(subset=["date"])
         
-        # 5. Очищаем числа
-        df["sum"] = df["sum"].apply(clean_number)
-        df["production"] = df["production"].apply(clean_number)
+        # 5. КРИТИЧНО: Очищаем числа от форматирования!
+        # Сумма — обычное число
+        df["sum"] = df["sum"].apply(lambda x: clean_number(x, is_percent=False))
+        # Производ — может быть в процентах (98,00%) или в долях (0.98)
+        df["production"] = df["production"].apply(lambda x: clean_number(x, is_percent=False))
+        
+        # Заменяем NaN на 0 для сумм
+        df["sum"] = df["sum"].fillna(0)
         
         # 6. Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
         df = df[df["platform"] != "nan"]  # Удаляем пустые площадки
         
-        # 7. Агрегация: один сотрудник + одна дата + одна площадка
+        # 7. Агрегация: один сотрудник + одна дата + одна площадка = одна строка
+        # СУММА СУММИРУЕТСЯ, производство берём среднее (или первое непустое)
+        def get_production(x):
+            """Берёт среднее непустых значений производства."""
+            non_nan = x.dropna()
+            if len(non_nan) > 0:
+                return non_nan.mean()
+            return 0.0
+        
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
-            sum=("sum", "sum"),
-            production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0)
+            sum=("sum", "sum"),  # СУММИРУЕМ все суммы для одного сотрудника за день
+            production=("production", get_production)  # Среднее производство
         ).copy()
         
         return df, df_agg
@@ -336,12 +362,12 @@ st.plotly_chart(fig_scatter, use_container_width=True)
 col_top_sum, col_top_prod = st.columns(2)
 
 with col_top_sum:
-    st.subheader(" Топ-10 по сумме")
+    st.subheader("🏆 Топ-10 по сумме")
     top_sum = employee_stats.nlargest(10, "total_sum")[["login", "platform", "total_sum"]]
     st.dataframe(top_sum, use_container_width=True, hide_index=True)
 
 with col_top_prod:
-    st.subheader("🏆 Топ-10 по производству")
+    st.subheader(" Топ-10 по производству")
     top_prod = employee_stats.nlargest(10, "avg_production")[["login", "platform", "avg_production"]]
     st.dataframe(top_prod, use_container_width=True, hide_index=True)
 
@@ -360,7 +386,7 @@ with st.expander("Показать все данные"):
 
     csv = display_df.to_csv(index=False, sep=";").encode("utf-8-sig")
     st.download_button(
-        "️ Скачать отфильтрованные данные (CSV)",
+        "⬇️ Скачать отфильтрованные данные (CSV)",
         data=csv,
         file_name="dashboard_export.csv",
         mime="text/csv"
