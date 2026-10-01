@@ -8,12 +8,12 @@ from datetime import timedelta
 # ============================================================
 st.set_page_config(
     page_title="Дашборд площадок",
-    page_icon="",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title(" Дашборд по площадкам и сотрудникам")
+st.title("📊 Дашборд по площадкам и сотрудникам")
 st.markdown("---")
 
 # ============================================================
@@ -22,99 +22,66 @@ st.markdown("---")
 DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD75RfNHsz8YOz4L_dFIq4m7SFvAUWu45SKqw2aHRRiwCWjR1pQhx67LLFKEdsNqqWM-A/pub?output=csv"
 
 # ============================================================
-# ФУНКЦИЯ ЗАГРУЗКИ И ОЧИСТКИ ДАННЫХ
+# ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ
 # ============================================================
 @st.cache_data(ttl=300)
-def load_and_clean_data(url):
-    """Загружает и очищает данные из CSV."""
+def load_data(url):
+    """Загружает данные из CSV."""
     try:
-        # 1. Загрузка
         df = pd.read_csv(url, encoding='utf-8')
-
-        # 2. Удаляем ТОЛЬКО повторяющиеся шапки (строки где первая колонка = "Операционный день")
-        # и разделители (---)
-        if len(df.columns) > 0:
-            first_col = df.iloc[:, 0].astype(str).str.strip()
-            # Ищем строки с заголовками (кроме самой первой строки)
-            mask_headers = (first_col == "Операционный день") & (df.index > 0)
-            # Ищем строки-разделители
-            mask_separators = first_col.str.contains(r'^---+', na=False, regex=True)
-            # Удаляем их
-            df = df[~(mask_headers | mask_separators)].copy()
-
-        # 3. Нормализуем названия колонок (берем первые 5)
-        if len(df.columns) >= 5:
-            df = df.iloc[:, :5].copy()
-            df.columns = ["date", "login", "sum", "production", "platform"]
-        else:
-            st.error(f"Недостаточно колонок: {len(df.columns)}")
-            return None, None
-
-        # 4. Приводим даты (учитываем ДД/ММ/ГГ и ММ/ДД/ГГ)
+        
+        # Переименовываем колонки
+        df.columns = ["date", "login", "sum", "production", "platform"]
+        
+        # Приводим даты (ДД/ММ/ГГ или ММ/ДД/ГГ)
         def parse_date(val):
             val = str(val).strip()
             if val in ["nan", "NaT", "", "None"]:
                 return pd.NaT
-            
             parts = val.replace(".", "/").split("/")
             if len(parts) != 3:
                 return pd.NaT
-            
-            try:
-                a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
-            except:
-                return pd.NaT
-            
-            # Год (26 -> 2026)
+            a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
             year = 2000 + c if c < 100 else c
-            
-            # Определяем формат: если первый элемент > 12, это ДД/ММ/ГГ
-            # Если второй элемент > 12, это ММ/ДД/ГГ
             if a > 12:
-                day, month = a, b  # ДД/ММ/ГГ
-            elif b > 12:
-                month, day = a, b  # ММ/ДД/ГГ
-            else:
-                # Неоднозначно — предполагаем ДД/ММ/ГГ
                 day, month = a, b
-            
+            elif b > 12:
+                month, day = a, b
+            else:
+                day, month = a, b
             try:
                 return pd.Timestamp(year=year, month=month, day=day)
             except:
                 return pd.NaT
-
+        
         df["date"] = df["date"].apply(parse_date)
         df = df.dropna(subset=["date"])
-
-        # 5. Приводим числа (КРИТИЧНО: заменяем пустые значения на 0)
+        
+        # Приводим числа
         df["sum"] = pd.to_numeric(df["sum"], errors="coerce").fillna(0)
-        df["production"] = pd.to_numeric(df["production"], errors="coerce").fillna(0)
-
-        # 6. Нормализуем площадки
+        df["production"] = pd.to_numeric(df["production"], errors="coerce")
+        
+        # Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
-
-        # 7. Агрегация: один сотрудник + одна дата + одна площадка = одна строка
-        # Сумма суммируется, производство берем среднее
+        
+        # Агрегация: один сотрудник + одна дата + одна площадка
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
-            production=("production", "mean")
+            production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0)
         ).copy()
-
+        
         return df, df_agg
-
     except Exception as e:
-        st.error(f"Ошибка загрузки данных: {e}")
-        import traceback
-        st.code(traceback.format_exc())
+        st.error(f"Ошибка: {e}")
         return None, None
 
 # ============================================================
-# АВТОМАТИЧЕСКАЯ ЗАГРУЗКА ДАННЫХ
+# ЗАГРУЗКА ДАННЫХ
 # ============================================================
-df_raw, df_agg = load_and_clean_data(DEFAULT_CSV_URL)
+df_raw, df_agg = load_data(DEFAULT_CSV_URL)
 
 if df_raw is None or df_agg is None:
-    st.error("Не удалось загрузить данные. Проверьте ссылку или формат файла.")
+    st.error("Не удалось загрузить данные")
     st.stop()
 
 # ============================================================
@@ -194,7 +161,7 @@ st.sidebar.success(f"✅ Записей: {len(df_filtered)}")
 # ============================================================
 # БЛОК 1: KPI КАРТОЧКИ
 # ============================================================
-st.subheader("📌 Общие показатели")
+st.subheader(" Общие показатели")
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -203,7 +170,7 @@ avg_production = df_filtered["production"].mean()
 total_employees = df_filtered["login"].nunique()
 total_records = len(df_filtered)
 
-col1.metric(" Общая сумма", f"{total_sum:,.2f} ₽")
+col1.metric("💰 Общая сумма", f"{total_sum:,.2f} ₽")
 col2.metric("📈 Средний производ", f"{avg_production:.3f}" if not pd.isna(avg_production) else "0.000")
 col3.metric("👥 Сотрудников", total_employees)
 col4.metric("📋 Записей", total_records)
@@ -290,7 +257,7 @@ with col_right:
 # ============================================================
 # БЛОК 5: SCATTER PLOT
 # ============================================================
-st.subheader(" Эффективность сотрудников (Сумма vs Производ)")
+st.subheader("🎯 Эффективность сотрудников (Сумма vs Производ)")
 
 employee_stats = df_filtered.groupby(["login", "platform"]).agg(
     total_sum=("sum", "sum"),
