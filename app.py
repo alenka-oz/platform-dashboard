@@ -8,12 +8,12 @@ from datetime import timedelta
 # ============================================================
 st.set_page_config(
     page_title="Дашборд площадок",
-    page_icon="",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title(" Дашборд по площадкам и сотрудникам")
+st.title("📊 Дашборд по площадкам и сотрудникам")
 st.markdown("---")
 
 # ============================================================
@@ -25,25 +25,14 @@ DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD7
 # ФУНКЦИЯ ОЧИСТКИ ЧИСЕЛ
 # ============================================================
 def clean_number(val):
-    """Очищает строку от форматирования и конвертирует в число.
-    
-    Примеры:
-    "12 960,00" -> 12960.0
-    "98,00%" -> 0.98
-    "1.13" -> 1.13
-    "" -> NaN
-    """
+    """Очищает строку от форматирования и конвертирует в число."""
     if pd.isna(val):
         return float('nan')
     
     s = str(val).strip()
     
-    if s in ["", "nan", "None", "—", "-"]:
+    if s in ["", "nan", "None", "—", "-", "None.1"]:
         return float('nan')
-    
-    # Убираем знак процента (если есть — значит это доля, делим на 100)
-    is_percent = "%" in s
-    s = s.replace("%", "").strip()
     
     # Убираем пробелы (тысячные разделители)
     s = s.replace(" ", "")
@@ -52,10 +41,7 @@ def clean_number(val):
     s = s.replace(",", ".")
     
     try:
-        num = float(s)
-        if is_percent:
-            num = num / 100
-        return num
+        return float(s)
     except:
         return float('nan')
 
@@ -109,9 +95,12 @@ def load_data(url):
         df["date"] = df["date"].apply(parse_date)
         df = df.dropna(subset=["date"])
         
-        # 5. КРИТИЧНО: Очищаем числа от форматирования!
+        # 5. Очищаем числа (КРИТИЧНО!)
         df["sum"] = df["sum"].apply(clean_number)
         df["production"] = df["production"].apply(clean_number)
+        
+        # Заменяем NaN на 0 для сумм
+        df["sum"] = df["sum"].fillna(0)
         
         # 6. Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
@@ -234,7 +223,7 @@ st.markdown("---")
 # ============================================================
 # БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ
 # ============================================================
-st.subheader(" Средний производ по площадкам")
+st.subheader("🏢 Средний производ по площадкам")
 
 platform_stats = df_filtered.groupby("platform").agg(
     avg_production=("production", "mean"),
@@ -259,7 +248,7 @@ st.plotly_chart(fig_platform, use_container_width=True)
 # ============================================================
 # БЛОК 3: ДИНАМИКА ПО ДНЯМ
 # ============================================================
-st.subheader(" Динамика среднего производства по дням")
+st.subheader("📅 Динамика среднего производства по дням")
 
 daily_platform = df_filtered.groupby(["date", "platform"])["production"].mean().reset_index()
 
@@ -341,7 +330,7 @@ with col_top_sum:
     st.dataframe(top_sum, use_container_width=True, hide_index=True)
 
 with col_top_prod:
-    st.subheader("🏆 Топ-10 по производству")
+    st.subheader(" Топ-10 по производству")
     top_prod = employee_stats.nlargest(10, "avg_production")[["login", "platform", "avg_production"]]
     st.dataframe(top_prod, use_container_width=True, hide_index=True)
 
