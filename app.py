@@ -28,12 +28,37 @@ DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD7
 def load_data(url):
     """Загружает данные из CSV."""
     try:
+        # 1. Загрузка CSV
         df = pd.read_csv(url, encoding='utf-8')
         
-        # Переименовываем колонки
-        df.columns = ["date", "login", "sum", "production", "platform"]
+        # ОТЛАДКА: показываем сырые данные
+        st.sidebar.markdown("### 🔍 Отладка")
+        st.sidebar.write(f"**Всего строк:** {len(df)}")
+        st.sidebar.write(f"**Колонки:** {list(df.columns)}")
+        st.sidebar.write("**Первые 5 строк:**")
+        st.sidebar.dataframe(df.head(), use_container_width=True)
         
-        # Приводим даты (ДД/ММ/ГГ или ММ/ДД/ГГ)
+        # 2. Удаляем дубли шапок и разделители
+        if len(df.columns) > 0:
+            first_col = df.iloc[:, 0].astype(str).str.strip()
+            # Удаляем строки где первая колонка = "Операционный день" (кроме первой строки)
+            mask_headers = (first_col == "Операционный день") & (df.index > 0)
+            # Удаляем строки-разделители
+            mask_separators = first_col.str.contains(r'^---+', na=False, regex=True)
+            df = df[~(mask_headers | mask_separators)].copy()
+        
+        # 3. Переименовываем колонки
+        if len(df.columns) >= 5:
+            df = df.iloc[:, :5].copy()
+            df.columns = ["date", "login", "sum", "production", "platform"]
+        
+        # ОТЛАДКА: после очистки
+        st.sidebar.write("**После очистки:**")
+        st.sidebar.dataframe(df.head(), use_container_width=True)
+        st.sidebar.write(f"**Типы данных:**")
+        st.sidebar.write(df.dtypes)
+        
+        # 4. Приводим даты
         def parse_date(val):
             val = str(val).strip()
             if val in ["nan", "NaT", "", "None"]:
@@ -41,7 +66,10 @@ def load_data(url):
             parts = val.replace(".", "/").split("/")
             if len(parts) != 3:
                 return pd.NaT
-            a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
+            try:
+                a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
+            except:
+                return pd.NaT
             year = 2000 + c if c < 100 else c
             if a > 12:
                 day, month = a, b
@@ -57,22 +85,35 @@ def load_data(url):
         df["date"] = df["date"].apply(parse_date)
         df = df.dropna(subset=["date"])
         
-        # Приводим числа
+        # 5. Приводим числа (КРИТИЧНО!)
+        # Сначала заменяем пустые строки и "nan" на NaN
+        df["sum"] = df["sum"].astype(str).str.strip()
+        df["sum"] = df["sum"].replace(["", "nan", "None", "None.1"], pd.NA)
         df["sum"] = pd.to_numeric(df["sum"], errors="coerce").fillna(0)
-        df["production"] = pd.to_numeric(df["production"], errors="coerce")
         
-        # Нормализуем площадки
+        df["production"] = df["production"].astype(str).str.strip()
+        df["production"] = df["production"].replace(["", "nan", "None", "None.1"], pd.NA)
+        df["production"] = pd.to_numeric(df["production"], errors="coerce").fillna(0)
+        
+        # ОТЛАДКА: после конвертации чисел
+        st.sidebar.write("**Суммы (первые 10):**")
+        st.sidebar.write(df["sum"].head(10).tolist())
+        st.sidebar.write(f"**Сумма всех записей:** {df['sum'].sum()}")
+        
+        # 6. Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
         
-        # Агрегация: один сотрудник + одна дата + одна площадка
+        # 7. Агрегация
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
-            production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0)
+            production=("production", "mean")
         ).copy()
         
         return df, df_agg
     except Exception as e:
         st.error(f"Ошибка: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return None, None
 
 # ============================================================
@@ -87,6 +128,7 @@ if df_raw is None or df_agg is None:
 # ============================================================
 # БОКОВАЯ ПАНЕЛЬ: ФИЛЬТРЫ
 # ============================================================
+st.sidebar.markdown("---")
 st.sidebar.header("📅 Фильтры")
 
 min_date = df_agg["date"].min()
@@ -161,7 +203,7 @@ st.sidebar.success(f"✅ Записей: {len(df_filtered)}")
 # ============================================================
 # БЛОК 1: KPI КАРТОЧКИ
 # ============================================================
-st.subheader(" Общие показатели")
+st.subheader("📌 Общие показатели")
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -171,7 +213,7 @@ total_employees = df_filtered["login"].nunique()
 total_records = len(df_filtered)
 
 col1.metric("💰 Общая сумма", f"{total_sum:,.2f} ₽")
-col2.metric("📈 Средний производ", f"{avg_production:.3f}" if not pd.isna(avg_production) else "0.000")
+col2.metric("📈 Средний производ", f"{avg_production:.3f}")
 col3.metric("👥 Сотрудников", total_employees)
 col4.metric("📋 Записей", total_records)
 
@@ -180,7 +222,7 @@ st.markdown("---")
 # ============================================================
 # БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ
 # ============================================================
-st.subheader("🏢 Средний производ по площадкам")
+st.subheader(" Средний производ по площадкам")
 
 platform_stats = df_filtered.groupby("platform").agg(
     avg_production=("production", "mean"),
@@ -227,7 +269,7 @@ st.plotly_chart(fig_daily, use_container_width=True)
 col_left, col_right = st.columns(2)
 
 with col_left:
-    st.subheader("💵 Доля площадок в общей сумме")
+    st.subheader(" Доля площадок в общей сумме")
     fig_pie = px.pie(
         platform_stats,
         values="total_sum",
