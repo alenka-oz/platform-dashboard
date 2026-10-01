@@ -8,18 +8,57 @@ from datetime import timedelta
 # ============================================================
 st.set_page_config(
     page_title="Дашборд площадок",
-    page_icon="📊",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("📊 Дашборд по площадкам и сотрудникам")
+st.title(" Дашборд по площадкам и сотрудникам")
 st.markdown("---")
 
 # ============================================================
 # ВШИТАЯ ССЫЛКА НА ДАННЫЕ
 # ============================================================
 DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD75RfNHsz8YOz4L_dFIq4m7SFvAUWu45SKqw2aHRRiwCWjR1pQhx67LLFKEdsNqqWM-A/pub?output=csv"
+
+# ============================================================
+# ФУНКЦИЯ ОЧИСТКИ ЧИСЕЛ
+# ============================================================
+def clean_number(val):
+    """Очищает строку от форматирования и конвертирует в число.
+    
+    Примеры:
+    "12 960,00" -> 12960.0
+    "98,00%" -> 0.98
+    "1.13" -> 1.13
+    "" -> NaN
+    """
+    if pd.isna(val):
+        return float('nan')
+    
+    s = str(val).strip()
+    
+    if s in ["", "nan", "None", "—", "-"]:
+        return float('nan')
+    
+    # Убираем знак процента (если есть — значит это доля, делим на 100)
+    is_percent = "%" in s
+    s = s.replace("%", "").strip()
+    
+    # Убираем пробелы (тысячные разделители)
+    s = s.replace(" ", "")
+    
+    # Заменяем запятую на точку (десятичный разделитель)
+    s = s.replace(",", ".")
+    
+    try:
+        num = float(s)
+        if is_percent:
+            num = num / 100
+        return num
+    except:
+        return float('nan')
+
 
 # ============================================================
 # ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ
@@ -31,19 +70,10 @@ def load_data(url):
         # 1. Загрузка CSV
         df = pd.read_csv(url, encoding='utf-8')
         
-        # ОТЛАДКА: показываем сырые данные
-        st.sidebar.markdown("### 🔍 Отладка")
-        st.sidebar.write(f"**Всего строк:** {len(df)}")
-        st.sidebar.write(f"**Колонки:** {list(df.columns)}")
-        st.sidebar.write("**Первые 5 строк:**")
-        st.sidebar.dataframe(df.head(), use_container_width=True)
-        
         # 2. Удаляем дубли шапок и разделители
         if len(df.columns) > 0:
             first_col = df.iloc[:, 0].astype(str).str.strip()
-            # Удаляем строки где первая колонка = "Операционный день" (кроме первой строки)
             mask_headers = (first_col == "Операционный день") & (df.index > 0)
-            # Удаляем строки-разделители
             mask_separators = first_col.str.contains(r'^---+', na=False, regex=True)
             df = df[~(mask_headers | mask_separators)].copy()
         
@@ -51,12 +81,6 @@ def load_data(url):
         if len(df.columns) >= 5:
             df = df.iloc[:, :5].copy()
             df.columns = ["date", "login", "sum", "production", "platform"]
-        
-        # ОТЛАДКА: после очистки
-        st.sidebar.write("**После очистки:**")
-        st.sidebar.dataframe(df.head(), use_container_width=True)
-        st.sidebar.write(f"**Типы данных:**")
-        st.sidebar.write(df.dtypes)
         
         # 4. Приводим даты
         def parse_date(val):
@@ -85,20 +109,9 @@ def load_data(url):
         df["date"] = df["date"].apply(parse_date)
         df = df.dropna(subset=["date"])
         
-        # 5. Приводим числа (КРИТИЧНО!)
-        # Сначала заменяем пустые строки и "nan" на NaN
-        df["sum"] = df["sum"].astype(str).str.strip()
-        df["sum"] = df["sum"].replace(["", "nan", "None", "None.1"], pd.NA)
-        df["sum"] = pd.to_numeric(df["sum"], errors="coerce").fillna(0)
-        
-        df["production"] = df["production"].astype(str).str.strip()
-        df["production"] = df["production"].replace(["", "nan", "None", "None.1"], pd.NA)
-        df["production"] = pd.to_numeric(df["production"], errors="coerce").fillna(0)
-        
-        # ОТЛАДКА: после конвертации чисел
-        st.sidebar.write("**Суммы (первые 10):**")
-        st.sidebar.write(df["sum"].head(10).tolist())
-        st.sidebar.write(f"**Сумма всех записей:** {df['sum'].sum()}")
+        # 5. КРИТИЧНО: Очищаем числа от форматирования!
+        df["sum"] = df["sum"].apply(clean_number)
+        df["production"] = df["production"].apply(clean_number)
         
         # 6. Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
@@ -106,7 +119,7 @@ def load_data(url):
         # 7. Агрегация
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
-            production=("production", "mean")
+            production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0)
         ).copy()
         
         return df, df_agg
@@ -128,7 +141,6 @@ if df_raw is None or df_agg is None:
 # ============================================================
 # БОКОВАЯ ПАНЕЛЬ: ФИЛЬТРЫ
 # ============================================================
-st.sidebar.markdown("---")
 st.sidebar.header("📅 Фильтры")
 
 min_date = df_agg["date"].min()
@@ -247,7 +259,7 @@ st.plotly_chart(fig_platform, use_container_width=True)
 # ============================================================
 # БЛОК 3: ДИНАМИКА ПО ДНЯМ
 # ============================================================
-st.subheader("📅 Динамика среднего производства по дням")
+st.subheader(" Динамика среднего производства по дням")
 
 daily_platform = df_filtered.groupby(["date", "platform"])["production"].mean().reset_index()
 
@@ -269,7 +281,7 @@ st.plotly_chart(fig_daily, use_container_width=True)
 col_left, col_right = st.columns(2)
 
 with col_left:
-    st.subheader(" Доля площадок в общей сумме")
+    st.subheader("💵 Доля площадок в общей сумме")
     fig_pie = px.pie(
         platform_stats,
         values="total_sum",
