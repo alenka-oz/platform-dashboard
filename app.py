@@ -8,12 +8,12 @@ from datetime import timedelta
 # ============================================================
 st.set_page_config(
     page_title="Дашборд площадок",
-    page_icon="📊",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("📊 Дашборд по площадкам и сотрудникам")
+st.title(" Дашборд по площадкам и сотрудникам")
 st.markdown("---")
 
 # ============================================================
@@ -24,18 +24,22 @@ DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD7
 # ============================================================
 # ФУНКЦИЯ ЗАГРУЗКИ И ОЧИСТКИ ДАННЫХ
 # ============================================================
-@st.cache_data(ttl=300)  # Кэш обновляется каждые 5 минут
+@st.cache_data(ttl=300)
 def load_and_clean_data(url):
     """Загружает и очищает данные из CSV."""
     try:
         # 1. Загрузка
         df = pd.read_csv(url, encoding='utf-8')
 
-        # 2. Удаляем дубли шапок и разделители (---)
+        # 2. Удаляем ТОЛЬКО повторяющиеся шапки (строки где первая колонка = "Операционный день")
+        # и разделители (---)
         if len(df.columns) > 0:
             first_col = df.iloc[:, 0].astype(str).str.strip()
-            mask_headers = first_col.isin(["Операционный день", "login", "Сумма", "Производ", "площадка"])
+            # Ищем строки с заголовками (кроме самой первой строки)
+            mask_headers = (first_col == "Операционный день") & (df.index > 0)
+            # Ищем строки-разделители
             mask_separators = first_col.str.contains(r'^---+', na=False, regex=True)
+            # Удаляем их
             df = df[~(mask_headers | mask_separators)].copy()
 
         # 3. Нормализуем названия колонок (берем первые 5)
@@ -61,14 +65,18 @@ def load_and_clean_data(url):
             except:
                 return pd.NaT
             
+            # Год (26 -> 2026)
             year = 2000 + c if c < 100 else c
             
+            # Определяем формат: если первый элемент > 12, это ДД/ММ/ГГ
+            # Если второй элемент > 12, это ММ/ДД/ГГ
             if a > 12:
                 day, month = a, b  # ДД/ММ/ГГ
             elif b > 12:
                 month, day = a, b  # ММ/ДД/ГГ
             else:
-                day, month = a, b  # По умолчанию ДД/ММ/ГГ
+                # Неоднозначно — предполагаем ДД/ММ/ГГ
+                day, month = a, b
             
             try:
                 return pd.Timestamp(year=year, month=month, day=day)
@@ -78,23 +86,18 @@ def load_and_clean_data(url):
         df["date"] = df["date"].apply(parse_date)
         df = df.dropna(subset=["date"])
 
-        # 5. Приводим числа
+        # 5. Приводим числа (КРИТИЧНО: заменяем пустые значения на 0)
         df["sum"] = pd.to_numeric(df["sum"], errors="coerce").fillna(0)
-        df["production"] = pd.to_numeric(df["production"], errors="coerce")
+        df["production"] = pd.to_numeric(df["production"], errors="coerce").fillna(0)
 
         # 6. Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
 
         # 7. Агрегация: один сотрудник + одна дата + одна площадка = одна строка
-        def get_first_non_nan(series):
-            non_nan = series.dropna()
-            if len(non_nan) > 0:
-                return non_nan.iloc[0]
-            return 0.0
-
+        # Сумма суммируется, производство берем среднее
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
-            production=("production", get_first_non_nan)
+            production=("production", "mean")
         ).copy()
 
         return df, df_agg
@@ -200,7 +203,7 @@ avg_production = df_filtered["production"].mean()
 total_employees = df_filtered["login"].nunique()
 total_records = len(df_filtered)
 
-col1.metric("💰 Общая сумма", f"{total_sum:,.2f} ₽")
+col1.metric(" Общая сумма", f"{total_sum:,.2f} ₽")
 col2.metric("📈 Средний производ", f"{avg_production:.3f}" if not pd.isna(avg_production) else "0.000")
 col3.metric("👥 Сотрудников", total_employees)
 col4.metric("📋 Записей", total_records)
@@ -287,7 +290,7 @@ with col_right:
 # ============================================================
 # БЛОК 5: SCATTER PLOT
 # ============================================================
-st.subheader("🎯 Эффективность сотрудников (Сумма vs Производ)")
+st.subheader(" Эффективность сотрудников (Сумма vs Производ)")
 
 employee_stats = df_filtered.groupby(["login", "platform"]).agg(
     total_sum=("sum", "sum"),
