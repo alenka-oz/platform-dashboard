@@ -1,16 +1,15 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
 import io
+from datetime import timedelta
 
 # ============================================================
 # НАСТРОЙКА СТРАНИЦЫ
 # ============================================================
 st.set_page_config(
     page_title="Дашборд площадок",
-    page_icon="",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -22,24 +21,19 @@ st.markdown("---")
 # ============================================================
 # ФУНКЦИЯ ЗАГРУЗКИ И ОЧИСТКИ ДАННЫХ
 # ============================================================
-@st.cache_data(ttl=300)  # кэш на 5 минут
+@st.cache_data(ttl=300)
 def load_and_clean_data(source_type, source_value):
-    """
-    Загружает данные из Google Sheets (по ссылке) или локального Excel/CSV.
-    Автоматически очищает: убирает дубли шапок, приводит даты, заполняет пустоты.
-    """
+    """Загружает и очищает данные из Excel или CSV."""
     try:
         if source_type == "Google Sheets (CSV-ссылка)":
-            # Пользователь вставляет публичную CSV-ссылку из Google Sheets
             df = pd.read_csv(source_value)
         elif source_type == "Excel файл":
             df = pd.read_excel(io.BytesIO(source_value), engine='openpyxl')
         else:
             st.error("Неизвестный источник")
-            return None
+            return None, None
 
         # --- 1. Убираем строки-дубли шапок ---
-        # Ищем строки, где первая колонка содержит текст "Операционный день" или "login"
         header_keywords = ["Операционный день", "login", "Сумма", "Производ", "площадка"]
         mask = df.iloc[:, 0].astype(str).str.contains(
             "|".join(header_keywords), case=False, na=False
@@ -50,10 +44,9 @@ def load_and_clean_data(source_type, source_value):
         df.columns = ["date", "login", "sum", "production", "platform"]
 
         # --- 3. Приводим даты к единому формату ---
-        # В данных встречаются форматы: 28/09/26 и 9/28/26
         def parse_date(val):
             val = str(val).strip()
-            if val in ["nan", "NaT", ""]:
+            if val in ["nan", "NaT", "", "None"]:
                 return pd.NaT
             # Пробуем разные форматы
             for fmt in ["%d/%m/%y", "%m/%d/%y", "%Y-%m-%d", "%d.%m.%Y"]:
@@ -61,14 +54,13 @@ def load_and_clean_data(source_type, source_value):
                     return pd.to_datetime(val, format=fmt)
                 except:
                     continue
-            # Если ничего не подошло — пробуем автоматический парсинг
             try:
                 return pd.to_datetime(val, dayfirst=True)
             except:
                 return pd.NaT
 
         df["date"] = df["date"].apply(parse_date)
-        df = df.dropna(subset=["date"])  # убираем строки без даты
+        df = df.dropna(subset=["date"])
 
         # --- 4. Приводим числа ---
         df["sum"] = pd.to_numeric(df["sum"], errors="coerce").fillna(0)
@@ -77,11 +69,11 @@ def load_and_clean_data(source_type, source_value):
         # --- 5. Нормализуем названия площадок ---
         df["platform"] = df["platform"].astype(str).str.strip()
 
-        # --- 6. Создаём агрегированную таблицу (по login + date) ---
-        # Для Быково и Софьино у одного человека несколько строк в день
+        # --- 6. Агрегация: один сотрудник + одна дата + одна площадка = одна строка ---
+        # Сумма суммируется, производ берётся первый (он одинаковый для всех строк сотрудника в день)
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
-            production=("production", "first")  # берём первое значение (оно одинаковое)
+            production=("production", "first")
         ).copy()
 
         return df, df_agg
@@ -94,12 +86,12 @@ def load_and_clean_data(source_type, source_value):
 # ============================================================
 # БОКОВАЯ ПАНЕЛЬ: ВЫБОР ИСТОЧНИКА ДАННЫХ
 # ============================================================
-st.sidebar.header("️ Источник данных")
+st.sidebar.header("📥 Источник данных")
 
 source_type = st.sidebar.radio(
     "Выберите источник:",
     ["Google Sheets (CSV-ссылка)", "Excel файл"],
-    index=1  # по умолчанию Excel
+    index=1
 )
 
 df_raw = None
@@ -127,7 +119,7 @@ elif source_type == "Excel файл":
 
 
 # ============================================================
-# ЕСЛИ ДАННЫЕ НЕ ЗАГРУЖЕНЫ — ПОКАЗЫВАЕМ ЗАГЛУШКУ
+# ЕСЛИ ДАННЫЕ НЕ ЗАГРУЖЕНЫ
 # ============================================================
 if df_raw is None or df_agg is None:
     st.info("👈 Загрузите данные через боковую панель, чтобы увидеть дашборд.")
@@ -135,17 +127,17 @@ if df_raw is None or df_agg is None:
 
 
 # ============================================================
-# БОКОВАЯ ПАНЕЛЬ: ФИЛЬТРЫ (УЛУЧШЕННАЯ ВЕРСИЯ С КАЛЕНДАРЕМ)
+# БОКОВАЯ ПАНЕЛЬ: ФИЛЬТРЫ
 # ============================================================
 st.sidebar.markdown("---")
-st.sidebar.header("📅 Фильтры по периоду и данным")
-
-# --- 1. Кнопки быстрого выбора периода ---
-st.sidebar.markdown("**Быстрый выбор периода:**")
-col_b1, col_b2, col_b3, col_b4 = st.sidebar.columns(4)
+st.sidebar.header("📅 Фильтры")
 
 min_date = df_agg["date"].min()
 max_date = df_agg["date"].max()
+
+# Кнопки быстрого выбора
+st.sidebar.markdown("**Быстрый выбор:**")
+col_b1, col_b2, col_b3 = st.sidebar.columns(3)
 
 with col_b1:
     if st.button("День", use_container_width=True):
@@ -154,48 +146,36 @@ with col_b2:
     if st.button("Неделя", use_container_width=True):
         st.session_state.period = "week"
 with col_b3:
-    if st.button("Месяц", use_container_width=True):
-        st.session_state.period = "month"
-with col_b4:
     if st.button("Всё время", use_container_width=True):
         st.session_state.period = "all"
 
-# Если период не выбран, берем всё время
 if "period" not in st.session_state:
     st.session_state.period = "all"
 
-# --- 2. Вычисление дат на основе выбранного периода ---
+# Вычисление дат
 if st.session_state.period == "day":
-    default_start = max_date
-    default_end = max_date
+    default_start, default_end = max_date, max_date
 elif st.session_state.period == "week":
-    from datetime import timedelta
     default_start = max_date - timedelta(days=6)
     default_end = max_date
-elif st.session_state.period == "month":
-    from datetime import timedelta
-    default_start = max_date - timedelta(days=29)
-    default_end = max_date
 else:
-    default_start = min_date
-    default_end = max_date
+    default_start, default_end = min_date, max_date
 
-# --- 3. Календарь выбора диапазона дат ---
+# Календарь
 selected_dates = st.sidebar.date_input(
-    "Выберите диапазон дат:",
+    "Диапазон дат:",
     value=(default_start, default_end),
     min_value=min_date,
     max_value=max_date,
     format="DD.MM.YYYY"
 )
 
-# Обработка выбора (календарь возвращает кортеж из 2 дат)
 if len(selected_dates) == 2:
     start_date, end_date = selected_dates
 else:
     start_date, end_date = min_date, max_date
 
-# --- 4. Фильтр по Площадке ---
+# Фильтр по площадке
 all_platforms = sorted(df_agg["platform"].unique())
 selected_platforms = st.sidebar.multiselect(
     "🏢 Площадка:",
@@ -203,21 +183,21 @@ selected_platforms = st.sidebar.multiselect(
     default=all_platforms
 )
 
-# --- 5. Фильтр по Сотруднику (с поиском) ---
+# Фильтр по сотруднику
 all_logins = sorted(df_agg["login"].unique())
-search_login = st.sidebar.text_input("🔎 Поиск сотрудника (login):", "")
+search_login = st.sidebar.text_input("🔎 Поиск сотрудника:", "")
 if search_login:
     filtered_logins = [l for l in all_logins if search_login.lower() in l.lower()]
 else:
     filtered_logins = all_logins
 
 selected_logins = st.sidebar.multiselect(
-    "👤 Сотрудник (по умолчанию первые 50):",
+    "👤 Сотрудник:",
     options=filtered_logins,
-    default=filtered_logins[:50] 
+    default=filtered_logins[:50]
 )
 
-# --- 6. ПРИМЕНЕНИЕ ВСЕХ ФИЛЬТРОВ К ДАННЫМ ---
+# Применяем фильтры
 df_filtered = df_agg[
     (df_agg["date"] >= pd.to_datetime(start_date)) &
     (df_agg["date"] <= pd.to_datetime(end_date)) &
@@ -225,13 +205,13 @@ df_filtered = df_agg[
     (df_agg["login"].isin(selected_logins))
 ].copy()
 
-st.sidebar.success(f"✅ Записей за период: {len(df_filtered)}")
+st.sidebar.success(f"✅ Записей: {len(df_filtered)}")
 
 
 # ============================================================
 # БЛОК 1: KPI КАРТОЧКИ
 # ============================================================
-st.subheader("📌 Общие показатели")
+st.subheader(" Общие показатели")
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -242,14 +222,14 @@ total_records = len(df_filtered)
 
 col1.metric("💰 Общая сумма", f"{total_sum:,.2f} ₽")
 col2.metric("📈 Средний производ", f"{avg_production:.3f}")
-col3.metric(" Сотрудников", total_employees)
+col3.metric("👥 Сотрудников", total_employees)
 col4.metric("📋 Записей", total_records)
 
 st.markdown("---")
 
 
 # ============================================================
-# БЛОК 2: ГРАФИК ПО ПЛОЩАДКАМ (Столбчатая диаграмма)
+# БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ
 # ============================================================
 st.subheader("🏢 Средний производ по площадкам")
 
@@ -275,7 +255,7 @@ st.plotly_chart(fig_platform, use_container_width=True)
 
 
 # ============================================================
-# БЛОК 3: ДИНАМИКА ПО ДНЯМ (Линейный график)
+# БЛОК 3: ДИНАМИКА ПО ДНЯМ
 # ============================================================
 st.subheader(" Динамика среднего производства по дням")
 
@@ -295,7 +275,7 @@ st.plotly_chart(fig_daily, use_container_width=True)
 
 
 # ============================================================
-# БЛОК 4: РАСПРЕДЕЛЕНИЕ СУММЫ ПО ПЛОЩАДКАМ (Круговая)
+# БЛОК 4: РАСПРЕДЕЛЕНИЕ СУММЫ И СОТРУДНИКОВ
 # ============================================================
 col_left, col_right = st.columns(2)
 
@@ -313,7 +293,7 @@ with col_left:
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with col_right:
-    st.subheader(" Количество сотрудников по площадкам")
+    st.subheader("👥 Количество сотрудников по площадкам")
     fig_bar_emp = px.bar(
         platform_stats,
         x="platform",
@@ -329,7 +309,7 @@ with col_right:
 
 
 # ============================================================
-# БЛОК 5: SCATTER PLOT — СУММА vs ПРОИЗВОД ПО СОТРУДНИКАМ
+# БЛОК 5: SCATTER PLOT — СУММА vs ПРОИЗВОД
 # ============================================================
 st.subheader("🎯 Эффективность сотрудников (Сумма vs Производ)")
 
@@ -362,26 +342,24 @@ with col_top_sum:
     st.dataframe(top_sum, use_container_width=True, hide_index=True)
 
 with col_top_prod:
-    st.subheader("🏆 Топ-10 по производству")
+    st.subheader(" Топ-10 по производству")
     top_prod = employee_stats.nlargest(10, "avg_production")[["login", "platform", "avg_production"]]
     st.dataframe(top_prod, use_container_width=True, hide_index=True)
 
 
 # ============================================================
-# БЛОК 7: ПОЛНАЯ ТАБЛИЦА С ДАННЫМИ
+# БЛОК 7: ПОЛНАЯ ТАБЛИЦА
 # ============================================================
 st.markdown("---")
-st.subheader(" Полная таблица данных")
+st.subheader("📋 Полная таблица данных")
 
-# Сворачиваемая таблица
-with st.expander("Показать все данные (агрегированные по сотруднику и дню)"):
-    display_df = df_filtered.sort_values(["date", "platform", "login"])
+with st.expander("Показать все данные"):
+    display_df = df_filtered.sort_values(["date", "platform", "login"]).copy()
     display_df["date_str"] = display_df["date"].dt.strftime("%d.%m.%Y")
     display_df = display_df[["date_str", "login", "platform", "sum", "production"]]
     display_df.columns = ["Дата", "Login", "Площадка", "Сумма", "Производ"]
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-    # Кнопка скачивания
     csv = display_df.to_csv(index=False, sep=";").encode("utf-8-sig")
     st.download_button(
         "⬇️ Скачать отфильтрованные данные (CSV)",
@@ -395,5 +373,4 @@ with st.expander("Показать все данные (агрегированн
 # ФУТЕР
 # ============================================================
 st.markdown("---")
-st.caption("Дашборд обновляется автоматически при изменении источника данных. "
-           "Фильтры работают мгновенно.")
+st.caption("Дашборд обновляется автоматически при изменении источника данных.")
