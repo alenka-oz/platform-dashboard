@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import io
 from datetime import timedelta
 
 # ============================================================
@@ -17,121 +16,112 @@ st.set_page_config(
 st.title("📊 Дашборд по площадкам и сотрудникам")
 st.markdown("---")
 
+# ============================================================
+# ВШИТАЯ ССЫЛКА НА ДАННЫЕ
+# ============================================================
+DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD75RfNHsz8YOz4L_dFIq4m7SFvAUWu45SKqw2aHRRiwCWjR1pQhx67LLFKEdsNqqWM-A/pub?output=csv"
 
 # ============================================================
 # ФУНКЦИЯ ЗАГРУЗКИ И ОЧИСТКИ ДАННЫХ
 # ============================================================
-@st.cache_data(ttl=300)
-def load_and_clean_data(source_type, source_value):
-    """Загружает и очищает данные из Excel или CSV."""
+@st.cache_data(ttl=300)  # Кэш обновляется каждые 5 минут
+def load_and_clean_data(url):
+    """Загружает и очищает данные из CSV."""
     try:
-        if source_type == "Google Sheets (CSV-ссылка)":
-            df = pd.read_csv(source_value)
-        elif source_type == "Excel файл":
-            df = pd.read_excel(io.BytesIO(source_value), engine='openpyxl')
+        # 1. Загрузка
+        df = pd.read_csv(url, encoding='utf-8')
+
+        # 2. Удаляем дубли шапок и разделители (---)
+        if len(df.columns) > 0:
+            first_col = df.iloc[:, 0].astype(str).str.strip()
+            mask_headers = first_col.isin(["Операционный день", "login", "Сумма", "Производ", "площадка"])
+            mask_separators = first_col.str.contains(r'^---+', na=False, regex=True)
+            df = df[~(mask_headers | mask_separators)].copy()
+
+        # 3. Нормализуем названия колонок (берем первые 5)
+        if len(df.columns) >= 5:
+            df = df.iloc[:, :5].copy()
+            df.columns = ["date", "login", "sum", "production", "platform"]
         else:
-            st.error("Неизвестный источник")
+            st.error(f"Недостаточно колонок: {len(df.columns)}")
             return None, None
 
-        # --- 1. Убираем строки-дубли шапок ---
-        header_keywords = ["Операционный день", "login", "Сумма", "Производ", "площадка"]
-        mask = df.iloc[:, 0].astype(str).str.contains(
-            "|".join(header_keywords), case=False, na=False
-        )
-        df = df[~mask].copy()
-
-        # --- 2. Нормализуем названия колонок ---
-        df.columns = ["date", "login", "sum", "production", "platform"]
-
-        # --- 3. Приводим даты к единому формату ---
+        # 4. Приводим даты (учитываем ДД/ММ/ГГ и ММ/ДД/ГГ)
         def parse_date(val):
             val = str(val).strip()
             if val in ["nan", "NaT", "", "None"]:
                 return pd.NaT
-            # Пробуем разные форматы
-            for fmt in ["%d/%m/%y", "%m/%d/%y", "%Y-%m-%d", "%d.%m.%Y"]:
-                try:
-                    return pd.to_datetime(val, format=fmt)
-                except:
-                    continue
+            
+            parts = val.replace(".", "/").split("/")
+            if len(parts) != 3:
+                return pd.NaT
+            
             try:
-                return pd.to_datetime(val, dayfirst=True)
+                a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
+            except:
+                return pd.NaT
+            
+            year = 2000 + c if c < 100 else c
+            
+            if a > 12:
+                day, month = a, b  # ДД/ММ/ГГ
+            elif b > 12:
+                month, day = a, b  # ММ/ДД/ГГ
+            else:
+                day, month = a, b  # По умолчанию ДД/ММ/ГГ
+            
+            try:
+                return pd.Timestamp(year=year, month=month, day=day)
             except:
                 return pd.NaT
 
         df["date"] = df["date"].apply(parse_date)
         df = df.dropna(subset=["date"])
 
-        # --- 4. Приводим числа ---
+        # 5. Приводим числа
         df["sum"] = pd.to_numeric(df["sum"], errors="coerce").fillna(0)
         df["production"] = pd.to_numeric(df["production"], errors="coerce")
 
-        # --- 5. Нормализуем названия площадок ---
+        # 6. Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
 
-        # --- 6. Агрегация: один сотрудник + одна дата + одна площадка = одна строка ---
-        # Сумма суммируется, производ берётся первый (он одинаковый для всех строк сотрудника в день)
+        # 7. Агрегация: один сотрудник + одна дата + одна площадка = одна строка
+        def get_first_non_nan(series):
+            non_nan = series.dropna()
+            if len(non_nan) > 0:
+                return non_nan.iloc[0]
+            return 0.0
+
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
-            production=("production", "first")
+            production=("production", get_first_non_nan)
         ).copy()
 
         return df, df_agg
 
     except Exception as e:
         st.error(f"Ошибка загрузки данных: {e}")
+        import traceback
+        st.code(traceback.format_exc())
         return None, None
 
-
 # ============================================================
-# АВТОМАТИЧЕСКАЯ ЗАГРУЗКА ИЗ GOOGLE SHEETS
+# АВТОМАТИЧЕСКАЯ ЗАГРУЗКА ДАННЫХ
 # ============================================================
-DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD75RfNHsz8YOz4L_dFIq4m7SFvAUWu45SKqw2aHRRiwCWjR1pQhx67LLFKEdsNqqWM-A/pub?output=csv"
-
-@st.cache_data(ttl=300)
-def load_data_from_sheets():
-    """Загружает данные из Google Sheets по умолчанию."""
-    return load_and_clean_data("Google Sheets (CSV-ссылка)", DEFAULT_CSV_URL)
-
-# Пробуем загрузить автоматически
-df_raw, df_agg = load_data_from_sheets()
+df_raw, df_agg = load_and_clean_data(DEFAULT_CSV_URL)
 
 if df_raw is None or df_agg is None:
-    st.sidebar.header("📥 Источник данных")
-    source_type = st.sidebar.radio(
-        "Выберите источник:",
-        ["Google Sheets (CSV-ссылка)", "Excel файл"],
-        index=0
-    )
-    
-    if source_type == "Google Sheets (CSV-ссылка)":
-        sheet_url = st.sidebar.text_input("Вставьте CSV-ссылку:", value=DEFAULT_CSV_URL)
-        if sheet_url:
-            df_raw, df_agg = load_and_clean_data(source_type, sheet_url)
-    elif source_type == "Excel файл":
-        uploaded_file = st.sidebar.file_uploader("Загрузите Excel файл", type=["xlsx", "xls"])
-        if uploaded_file:
-            df_raw, df_agg = load_and_clean_data(source_type, uploaded_file)
-
-
-# ============================================================
-# ЕСЛИ ДАННЫЕ НЕ ЗАГРУЖЕНЫ
-# ============================================================
-if df_raw is None or df_agg is None:
-    st.info("👈 Загрузите данные через боковую панель, чтобы увидеть дашборд.")
+    st.error("Не удалось загрузить данные. Проверьте ссылку или формат файла.")
     st.stop()
-
 
 # ============================================================
 # БОКОВАЯ ПАНЕЛЬ: ФИЛЬТРЫ
 # ============================================================
-st.sidebar.markdown("---")
 st.sidebar.header("📅 Фильтры")
 
 min_date = df_agg["date"].min()
 max_date = df_agg["date"].max()
 
-# Кнопки быстрого выбора
 st.sidebar.markdown("**Быстрый выбор:**")
 col_b1, col_b2, col_b3 = st.sidebar.columns(3)
 
@@ -148,7 +138,6 @@ with col_b3:
 if "period" not in st.session_state:
     st.session_state.period = "all"
 
-# Вычисление дат
 if st.session_state.period == "day":
     default_start, default_end = max_date, max_date
 elif st.session_state.period == "week":
@@ -157,7 +146,6 @@ elif st.session_state.period == "week":
 else:
     default_start, default_end = min_date, max_date
 
-# Календарь
 selected_dates = st.sidebar.date_input(
     "Диапазон дат:",
     value=(default_start, default_end),
@@ -171,7 +159,6 @@ if len(selected_dates) == 2:
 else:
     start_date, end_date = min_date, max_date
 
-# Фильтр по площадке
 all_platforms = sorted(df_agg["platform"].unique())
 selected_platforms = st.sidebar.multiselect(
     "🏢 Площадка:",
@@ -179,7 +166,6 @@ selected_platforms = st.sidebar.multiselect(
     default=all_platforms
 )
 
-# Фильтр по сотруднику
 all_logins = sorted(df_agg["login"].unique())
 search_login = st.sidebar.text_input("🔎 Поиск сотрудника:", "")
 if search_login:
@@ -193,7 +179,6 @@ selected_logins = st.sidebar.multiselect(
     default=filtered_logins[:50]
 )
 
-# Применяем фильтры
 df_filtered = df_agg[
     (df_agg["date"] >= pd.to_datetime(start_date)) &
     (df_agg["date"] <= pd.to_datetime(end_date)) &
@@ -203,11 +188,10 @@ df_filtered = df_agg[
 
 st.sidebar.success(f"✅ Записей: {len(df_filtered)}")
 
-
 # ============================================================
 # БЛОК 1: KPI КАРТОЧКИ
 # ============================================================
-st.subheader(" Общие показатели")
+st.subheader("📌 Общие показатели")
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -217,12 +201,11 @@ total_employees = df_filtered["login"].nunique()
 total_records = len(df_filtered)
 
 col1.metric("💰 Общая сумма", f"{total_sum:,.2f} ₽")
-col2.metric("📈 Средний производ", f"{avg_production:.3f}")
+col2.metric("📈 Средний производ", f"{avg_production:.3f}" if not pd.isna(avg_production) else "0.000")
 col3.metric("👥 Сотрудников", total_employees)
 col4.metric("📋 Записей", total_records)
 
 st.markdown("---")
-
 
 # ============================================================
 # БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ
@@ -249,11 +232,10 @@ fig_platform.update_traces(texttemplate="%{text:.3f}", textposition="outside")
 fig_platform.update_layout(showlegend=False, height=400)
 st.plotly_chart(fig_platform, use_container_width=True)
 
-
 # ============================================================
 # БЛОК 3: ДИНАМИКА ПО ДНЯМ
 # ============================================================
-st.subheader(" Динамика среднего производства по дням")
+st.subheader("📅 Динамика среднего производства по дням")
 
 daily_platform = df_filtered.groupby(["date", "platform"])["production"].mean().reset_index()
 
@@ -268,7 +250,6 @@ fig_daily = px.line(
 )
 fig_daily.update_layout(height=450)
 st.plotly_chart(fig_daily, use_container_width=True)
-
 
 # ============================================================
 # БЛОК 4: РАСПРЕДЕЛЕНИЕ СУММЫ И СОТРУДНИКОВ
@@ -303,9 +284,8 @@ with col_right:
     fig_bar_emp.update_layout(showlegend=False)
     st.plotly_chart(fig_bar_emp, use_container_width=True)
 
-
 # ============================================================
-# БЛОК 5: SCATTER PLOT — СУММА vs ПРОИЗВОД
+# БЛОК 5: SCATTER PLOT
 # ============================================================
 st.subheader("🎯 Эффективность сотрудников (Сумма vs Производ)")
 
@@ -326,9 +306,8 @@ fig_scatter = px.scatter(
 fig_scatter.update_layout(height=500)
 st.plotly_chart(fig_scatter, use_container_width=True)
 
-
 # ============================================================
-# БЛОК 6: ТОП-10 СОТРУДНИКОВ
+# БЛОК 6: ТОП-10
 # ============================================================
 col_top_sum, col_top_prod = st.columns(2)
 
@@ -338,10 +317,9 @@ with col_top_sum:
     st.dataframe(top_sum, use_container_width=True, hide_index=True)
 
 with col_top_prod:
-    st.subheader(" Топ-10 по производству")
+    st.subheader("🏆 Топ-10 по производству")
     top_prod = employee_stats.nlargest(10, "avg_production")[["login", "platform", "avg_production"]]
     st.dataframe(top_prod, use_container_width=True, hide_index=True)
-
 
 # ============================================================
 # БЛОК 7: ПОЛНАЯ ТАБЛИЦА
@@ -364,9 +342,8 @@ with st.expander("Показать все данные"):
         mime="text/csv"
     )
 
-
 # ============================================================
 # ФУТЕР
 # ============================================================
 st.markdown("---")
-st.caption("Дашборд обновляется автоматически при изменении источника данных.")
+st.caption("Дашборд обновляется автоматически при изменении данных в Google Таблице (кэш 5 минут).")
