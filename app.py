@@ -25,33 +25,41 @@ DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD7
 # ФУНКЦИЯ ПАРСИНГА ДАТЫ
 # ============================================================
 def parse_date(val):
-    """Парсит даты в формате ДД.ММ.ГГГГ или ДД/ММ/ГГ."""
+    """Парсит даты в форматах: 28/09/26, 9/28/26, 28.09.2026"""
     val = str(val).strip()
-    if val in ["nan", "NaT", "", "None", "Операционный день"]:
+    
+    # Проверяем, является ли значение валидной датой
+    if val in ["nan", "NaT", "", "None", "Операционный день", "login", "Сумма", "Производ", "площадка"]:
         return pd.NaT
     
     # Пробуем формат ДД.ММ.ГГГГ
-    if "." in val:
+    if "." in val and len(val.split(".")) == 3:
         try:
             return pd.to_datetime(val, format="%d.%m.%Y")
         except:
             pass
     
-    # Пробуем формат ДД/ММ/ГГ или ММ/ДД/ГГ
-    parts = val.split("/")
-    if len(parts) == 3:
-        try:
-            a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
-            year = 2000 + c if c < 100 else c
-            if a > 12:
-                day, month = a, b
-            elif b > 12:
-                month, day = a, b
-            else:
-                day, month = a, b
-            return pd.Timestamp(year=year, month=month, day=day)
-        except:
-            pass
+    # Пробуем форматы с /
+    if "/" in val:
+        parts = val.split("/")
+        if len(parts) == 3:
+            try:
+                a, b, c = int(parts[0]), int(parts[1]), int(parts[2])
+                year = 2000 + c if c < 100 else c
+                
+                # Определяем формат: если первый элемент > 12, это ДД/ММ/ГГ
+                # Если второй элемент > 12, это ММ/ДД/ГГ
+                if a > 12:
+                    day, month = a, b
+                elif b > 12:
+                    month, day = a, b
+                else:
+                    # Неоднозначно — предполагаем ДД/ММ/ГГ
+                    day, month = a, b
+                
+                return pd.Timestamp(year=year, month=month, day=day)
+            except:
+                pass
     
     return pd.NaT
 
@@ -89,20 +97,12 @@ def load_data(url):
         # 1. Загрузка CSV
         df = pd.read_csv(url, encoding='utf-8')
         
-        # ОТЛАДКА: показываем структуру
-        st.sidebar.markdown("### 🔍 Отладка")
-        st.sidebar.write(f"**Всего строк:** {len(df)}")
+        # ОТЛАДКА
+        st.sidebar.markdown("### 🔍 Отладка загрузки")
+        st.sidebar.write(f"**Всего строк в CSV:** {len(df)}")
         st.sidebar.write(f"**Колонки:** {list(df.columns)}")
-        st.sidebar.write(f"**Количество колонок:** {len(df.columns)}")
         
-        # 2. Если колонок больше 5, значит числа с запятой разбили строки
-        # Нужно объединить колонки правильно
-        if len(df.columns) > 5:
-            st.sidebar.warning(f"⚠️ Найдено {len(df.columns)} колонок вместо 5. Возможно, числа с запятой разбили строки.")
-            # Берём первые 5 колонок
-            df = df.iloc[:, :5].copy()
-        
-        # 3. Переименовываем колонки
+        # 2. Берём первые 5 колонок и переименовываем
         if len(df.columns) >= 5:
             df = df.iloc[:, :5].copy()
             df.columns = ["date", "login", "sum", "production", "platform"]
@@ -110,19 +110,29 @@ def load_data(url):
             st.error(f"Недостаточно колонок: {len(df.columns)}")
             return None, None
         
-        # 4. Парсим даты
+        # 3. Парсим даты
         df["date"] = df["date"].apply(parse_date)
-        df = df.dropna(subset=["date"])
         
-        # 5. Очищаем числа
+        # ФИЛЬТРУЕМ: оставляем только строки с валидной датой
+        df_before = len(df)
+        df = df.dropna(subset=["date"])
+        df_after = len(df)
+        st.sidebar.write(f"**Строк до фильтрации дат:** {df_before}")
+        st.sidebar.write(f"**Строк после фильтрации дат:** {df_after}")
+        st.sidebar.write(f"**Потеряно строк:** {df_before - df_after}")
+        
+        # 4. Очищаем числа
         df["sum"] = df["sum"].apply(clean_number)
         df["production"] = df["production"].apply(clean_number)
         
-        # 6. Нормализуем площадки
+        # 5. Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
         df = df[df["platform"] != "nan"]
         
-        # 7. Агрегация
+        st.sidebar.write(f"**Уникальных площадок:** {df['platform'].nunique()}")
+        st.sidebar.write(f"**Список площадок:** {sorted(df['platform'].unique())}")
+        
+        # 6. Агрегация: один сотрудник + одна дата + одна площадка
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
             production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0)
@@ -151,7 +161,7 @@ if df_raw is None or df_agg is None:
 # ============================================================
 # БОКОВАЯ ПАНЕЛЬ: ФИЛЬТРЫ
 # ============================================================
-st.sidebar.header(" Фильтры")
+st.sidebar.header("📅 Фильтры")
 
 min_date = df_agg["date"].min()
 max_date = df_agg["date"].max()
@@ -225,7 +235,7 @@ st.sidebar.success(f"✅ Записей после фильтрации: {len(df
 # ============================================================
 # БЛОК 1: KPI КАРТОЧКИ
 # ============================================================
-st.subheader("📌 Общие показатели")
+st.subheader(" Общие показатели")
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -244,7 +254,7 @@ st.markdown("---")
 # ============================================================
 # БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ
 # ============================================================
-st.subheader(" Средний производ по площадкам")
+st.subheader("🏢 Средний производ по площадкам")
 
 platform_stats = df_filtered.groupby("platform").agg(
     avg_production=("production", "mean"),
@@ -269,7 +279,7 @@ st.plotly_chart(fig_platform, use_container_width=True)
 # ============================================================
 # БЛОК 3: ДИНАМИКА ПО ДНЯМ
 # ============================================================
-st.subheader(" Динамика среднего производства по дням")
+st.subheader("📅 Динамика среднего производства по дням")
 
 daily_platform = df_filtered.groupby(["date", "platform"])["production"].mean().reset_index()
 
@@ -304,7 +314,7 @@ with col_left:
     st.plotly_chart(fig_pie, use_container_width=True)
 
 with col_right:
-    st.subheader("👥 Количество сотрудников по площадкам")
+    st.subheader(" Количество сотрудников по площадкам")
     fig_bar_emp = px.bar(
         platform_stats,
         x="platform",
@@ -321,7 +331,7 @@ with col_right:
 # ============================================================
 # БЛОК 5: SCATTER PLOT
 # ============================================================
-st.subheader("🎯 Эффективность сотрудников (Сумма vs Производ)")
+st.subheader(" Эффективность сотрудников (Сумма vs Производ)")
 
 employee_stats = df_filtered.groupby(["login", "platform"]).agg(
     total_sum=("sum", "sum"),
