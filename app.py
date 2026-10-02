@@ -19,7 +19,7 @@ st.markdown("---")
 # ============================================================
 # ВШИТАЯ ССЫЛКА НА ДАННЫЕ
 # ============================================================
-DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQwCe2ojZU0gGMQ3U1ob4YDxhZW16FTeuOUCSOEj7jCDyTb6TyVTm21wwrWE62MWgr50Bglz4Ixw3E8/pub?output=csv"
+DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD75RfNHsz8YOz4L_dFIq4m7SFvAUWu45SKqw2aHRRiwCWjR1pQhx67LLFKEdsNqqWM-A/pub?output=csv"
 
 # ============================================================
 # ФУНКЦИЯ ПАРСИНГА ДАТЫ
@@ -75,14 +75,21 @@ def clean_number(val):
         return float('nan')
 
 # ============================================================
-# ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ
+# ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ (БЕЗ ОГРАНИЧЕНИЙ)
 # ============================================================
 @st.cache_data(ttl=300)
 def load_data(url):
-    """Загружает данные из CSV."""
+    """Загружает ВСЕ данные из CSV без ограничений."""
     try:
-        df = pd.read_csv(url, encoding='utf-8')
+        # Загружаем ВСЕ строки без ограничений
+        df = pd.read_csv(url, encoding='utf-8', dtype=str)  # dtype=str чтобы не терять данные
         
+        # ОТЛАДКА: показываем сколько строк загружено
+        st.sidebar.markdown("### 📊 Статистика загрузки")
+        st.sidebar.write(f"**Всего строк в CSV:** {len(df)}")
+        st.sidebar.write(f"**Колонки:** {list(df.columns)}")
+        
+        # Берём первые 5 колонок и переименовываем
         if len(df.columns) >= 5:
             df = df.iloc[:, :5].copy()
             df.columns = ["date", "login", "sum", "production", "platform"]
@@ -90,19 +97,35 @@ def load_data(url):
             st.error(f"Недостаточно колонок: {len(df.columns)}")
             return None, None
         
+        # Парсим даты
         df["date"] = df["date"].apply(parse_date)
-        df = df.dropna(subset=["date"])
         
+        # Фильтруем только строки с валидной датой
+        df_before = len(df)
+        df = df.dropna(subset=["date"])
+        df_after = len(df)
+        st.sidebar.write(f"**Строк с валидной датой:** {df_after} из {df_before}")
+        
+        # Очищаем числа
         df["sum"] = df["sum"].apply(clean_number)
         df["production"] = df["production"].apply(clean_number)
         
+        # Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
         df = df[df["platform"] != "nan"]
         
+        st.sidebar.write(f"**Уникальных площадок:** {df['platform'].nunique()}")
+        st.sidebar.write(f"**Список площадок:** {sorted(df['platform'].unique())}")
+        
+        # Агрегация: один сотрудник + одна дата + одна площадка
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
             production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0)
         ).copy()
+        
+        st.sidebar.success(f"✅ Загружено {len(df_agg)} записей после агрегации")
+        st.sidebar.write(f"**Общая сумма:** {df_agg['sum'].sum():,.2f} ₽")
+        st.sidebar.write(f"**Средний производ:** {df_agg['production'].mean():.3f}")
         
         return df, df_agg
     except Exception as e:
@@ -192,7 +215,7 @@ df_filtered = df_agg[
     (df_agg["login"].isin(selected_logins))
 ].copy()
 
-st.sidebar.success(f"✅ Записей: {len(df_filtered)}")
+st.sidebar.success(f"✅ Записей после фильтрации: {len(df_filtered)}")
 
 # ============================================================
 # БЛОК 1: KPI КАРТОЧКИ
@@ -208,7 +231,7 @@ total_records = len(df_filtered)
 
 col1.metric("💰 Общая сумма", f"{total_sum:,.0f} ₽")
 col2.metric("📈 Средний производ", f"{avg_production:.3f}")
-col3.metric("👥 Сотрудников", total_employees)
+col3.metric(" Сотрудников", total_employees)
 col4.metric("📋 Записей", total_records)
 
 st.markdown("---")
@@ -323,7 +346,7 @@ with col_top_sum:
     st.dataframe(top_sum, use_container_width=True, hide_index=True)
 
 with col_top_prod:
-    st.subheader("🏆 Топ-10 по производству")
+    st.subheader(" Топ-10 по производству")
     top_prod = employee_stats.nlargest(10, "avg_production")[["login", "platform", "avg_production"]]
     st.dataframe(top_prod, use_container_width=True, hide_index=True)
 
@@ -342,7 +365,7 @@ with st.expander("Показать все данные"):
 
     csv = display_df.to_csv(index=False, sep=";").encode("utf-8-sig")
     st.download_button(
-        "️ Скачать отфильтрованные данные (CSV)",
+        "⬇️ Скачать отфильтрованные данные (CSV)",
         data=csv,
         file_name="dashboard_export.csv",
         mime="text/csv"
