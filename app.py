@@ -242,16 +242,23 @@ col4.metric("📋 Записей", total_records)
 st.markdown("---")
 
 # ============================================================
-# БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ (В ПРОЦЕНТАХ)
+# БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ (ИСПРАВЛЕННЫЙ)
 # ============================================================
 st.subheader("🏢 Средний производ по площадкам")
 
-# Для каждой площадки считаем СРЕДНЕЕ производство по всем сотрудникам и дням
-platform_stats = df_filtered.groupby("platform").agg(
-    avg_production=("production", "mean"),  # СРЕДНЕЕ, не сумма!
-    total_sum=("sum", "sum"),
-    employees=("login", "nunique")
-).reset_index().sort_values("avg_production", ascending=True)
+# ШАГ 1: Для каждого сотрудника за день берём СРЕДНЕЕ производство
+# (это важно, если у сотрудника несколько строк за день)
+employee_daily = df_filtered.groupby(["date", "login", "platform"], as_index=False).agg(
+    daily_production=("production", "mean"),  # Среднее за день
+    daily_sum=("sum", "sum")  # Сумма за день
+)
+
+# ШАГ 2: Для каждой площадки считаем среднее по всем сотрудникам и дням
+platform_stats = employee_daily.groupby("platform", as_index=False).agg(
+    avg_production=("daily_production", "mean"),  # Среднее по площадке
+    total_sum=("daily_sum", "sum"),  # Общая сумма
+    employees=("login", "nunique")  # Уникальных сотрудников
+).sort_values("avg_production", ascending=True)
 
 # Переводим в проценты
 platform_stats["avg_production_pct"] = platform_stats["avg_production"] * 100
