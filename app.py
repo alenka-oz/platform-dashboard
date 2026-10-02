@@ -235,28 +235,37 @@ col4.metric("📋 Записей", total_records)
 st.markdown("---")
 
 # ============================================================
-# БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ
+# БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ (ИСПРАВЛЕННЫЙ)
 # ============================================================
 st.subheader("🏢 Средний производ по площадкам")
 
-platform_stats = df_filtered.groupby("platform").agg(
+# Сначала агрегируем по сотруднику за день (если еще не сделано)
+employee_daily = df_filtered.groupby(["date", "login", "platform"], as_index=False).agg(
+    production=("production", "mean")
+)
+
+# Потом считаем среднее по площадке
+platform_stats = employee_daily.groupby("platform").agg(
     avg_production=("production", "mean"),
-    total_sum=("sum", "sum"),
+    total_sum=("sum", "sum") if "sum" in df_filtered.columns else ("production", "count"),
     employees=("login", "nunique")
 ).reset_index().sort_values("avg_production", ascending=True)
 
+# Умножаем на 100 для процентов
+platform_stats["avg_production_percent"] = platform_stats["avg_production"] * 100
+
 fig_platform = px.bar(
     platform_stats,
-    x="avg_production",
+    x="avg_production_percent",
     y="platform",
     orientation="h",
     color="platform",
-    text="avg_production",
-    title="Средний производ по площадкам",
+    text="avg_production_percent",
+    title="Средний производ по площадкам (%)",
     color_discrete_sequence=px.colors.qualitative.Set2
 )
-fig_platform.update_traces(texttemplate="%{text:.3f}", textposition="outside")
-fig_platform.update_layout(showlegend=False, height=400)
+fig_platform.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+fig_platform.update_layout(showlegend=False, height=400, xaxis_title="Производ (%)")
 st.plotly_chart(fig_platform, use_container_width=True)
 
 # ============================================================
