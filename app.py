@@ -22,10 +22,30 @@ st.markdown("---")
 DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQwCe2ojZU0gGMQ3U1ob4YDxhZW16FTeuOUCSOEj7jCDyTb6TyVTm21wwrWE62MWgr50Bglz4Ixw3E8/pub?output=csv"
 
 # ============================================================
+# ФИКСИРОВАННАЯ ЦВЕТОВАЯ ПАЛИТРА ПЛОЩАДОК
+# ============================================================
+PLATFORM_COLORS = {
+    "Тарный АТГ": "#F4B400",       # Жёлтый
+    "Дзержинский АТГ": "#0F9D58",  # Зелёный
+    "Софьино АТГ": "#DB4437",      # Красный
+    "Домодедово АТГ": "#4285F4",   # Синий
+    "ФФЦ Софьино АТГ": "#AB47BC",  # Фиолетовый
+    "Быково": "#FF7043",           # Оранжевый
+    "Софьино": "#26A69A",          # Бирюзовый
+    # Для площадок Ламоды/Яндекса (если появятся)
+    "Ламода Быково": "#FF7043",
+    "Ламода Софьино": "#26A69A",
+    "Яндекс Тарный": "#F4B400",
+    "Яндекс Дзержинский": "#0F9D58",
+    "Яндекс Софьино": "#DB4437",
+    "Яндекс Домодедово": "#4285F4",
+    "Яндекс Кувекино": "#8D6E63",  # Коричневый
+}
+
+# ============================================================
 # ФУНКЦИЯ ПАРСИНГА ДАТЫ
 # ============================================================
 def parse_date(val):
-    """Парсит даты: 28/09/26, 9/28/26, 28.09.2026"""
     val = str(val).strip()
     if not val or val.lower() in ['nan', 'none', 'операционный день', 'login', 
                                     'сумма', 'производ', 'площадка', '']:
@@ -58,7 +78,6 @@ def parse_date(val):
 # ФУНКЦИЯ ОЧИСТКИ ЧИСЕЛ
 # ============================================================
 def clean_number(val):
-    """Корректно парсит числа: 12 960,00 / 12960.00 / -11.44 / 0.98"""
     if pd.isna(val):
         return 0.0
     
@@ -88,7 +107,6 @@ def clean_number(val):
 # ============================================================
 @st.cache_data(ttl=300)
 def load_data(url):
-    """Загружает и очищает данные из CSV."""
     try:
         df = pd.read_csv(url, encoding='utf-8', sep=None, engine='python')
         
@@ -118,8 +136,6 @@ def load_data(url):
         df["platform"] = df["platform"].astype(str).str.strip()
         df = df[df["platform"] != "nan"]
 
-        # АГРЕГАЦИЯ: один сотрудник + одна дата + одна площадка = одна строка
-        # СУММА суммируется, ПРОИЗВОД усредняется
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
             production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0.0)
@@ -242,25 +258,16 @@ col4.metric("📋 Записей", total_records)
 st.markdown("---")
 
 # ============================================================
-# БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ (ИСПРАВЛЕННЫЙ)
+# БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ
 # ============================================================
 st.subheader("🏢 Средний производ по площадкам")
 
-# ШАГ 1: Для каждого сотрудника за день берём СРЕДНЕЕ производство
-# (это важно, если у сотрудника несколько строк за день)
-employee_daily = df_filtered.groupby(["date", "login", "platform"], as_index=False).agg(
-    daily_production=("production", "mean"),  # Среднее за день
-    daily_sum=("sum", "sum")  # Сумма за день
-)
+platform_stats = df_filtered.groupby("platform").agg(
+    avg_production=("production", "mean"),
+    total_sum=("sum", "sum"),
+    employees=("login", "nunique")
+).reset_index().sort_values("avg_production", ascending=True)
 
-# ШАГ 2: Для каждой площадки считаем среднее по всем сотрудникам и дням
-platform_stats = employee_daily.groupby("platform", as_index=False).agg(
-    avg_production=("daily_production", "mean"),  # Среднее по площадке
-    total_sum=("daily_sum", "sum"),  # Общая сумма
-    employees=("login", "nunique")  # Уникальных сотрудников
-).sort_values("avg_production", ascending=True)
-
-# Переводим в проценты
 platform_stats["avg_production_pct"] = platform_stats["avg_production"] * 100
 
 fig_platform = px.bar(
@@ -271,7 +278,7 @@ fig_platform = px.bar(
     color="platform",
     text="avg_production_pct",
     title="Средний производ по площадкам (%)",
-    color_discrete_sequence=px.colors.qualitative.Set2
+    color_discrete_map=PLATFORM_COLORS
 )
 fig_platform.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
 fig_platform.update_layout(showlegend=False, height=400, xaxis_title="Производ (%)")
@@ -292,7 +299,7 @@ fig_daily = px.line(
     color="platform",
     markers=True,
     title="Средний производ по площадкам в разрезе дней (%)",
-    color_discrete_sequence=px.colors.qualitative.Bold
+    color_discrete_map=PLATFORM_COLORS
 )
 fig_daily.update_layout(height=450, yaxis_title="Производ (%)")
 st.plotly_chart(fig_daily, use_container_width=True)
@@ -310,7 +317,7 @@ with col_left:
         names="platform",
         title="Распределение суммы по площадкам",
         hole=0.4,
-        color_discrete_sequence=px.colors.qualitative.Pastel
+        color_discrete_map=PLATFORM_COLORS
     )
     fig_pie.update_traces(textinfo="percent+label")
     st.plotly_chart(fig_pie, use_container_width=True)
@@ -324,7 +331,7 @@ with col_right:
         color="platform",
         text="employees",
         title="Сотрудников на площадке",
-        color_discrete_sequence=px.colors.qualitative.Set2
+        color_discrete_map=PLATFORM_COLORS
     )
     fig_bar_emp.update_traces(texttemplate="%{text}", textposition="outside")
     fig_bar_emp.update_layout(showlegend=False)
@@ -348,7 +355,7 @@ fig_scatter = px.scatter(
     color="platform",
     hover_data=["login"],
     title="Каждый сотрудник — точка. Чем правее и выше — тем лучше",
-    color_discrete_sequence=px.colors.qualitative.Set1
+    color_discrete_map=PLATFORM_COLORS
 )
 fig_scatter.update_layout(height=500, yaxis_title="Производ (%)")
 st.plotly_chart(fig_scatter, use_container_width=True)
@@ -359,7 +366,7 @@ st.plotly_chart(fig_scatter, use_container_width=True)
 col_top_sum, col_top_prod = st.columns(2)
 
 with col_top_sum:
-    st.subheader("🏆 Топ-10 по сумме")
+    st.subheader(" Топ-10 по сумме")
     top_sum = employee_stats.nlargest(10, "total_sum")[["login", "platform", "total_sum"]].copy()
     top_sum["total_sum"] = top_sum["total_sum"].apply(lambda x: f"{x:,.0f} ₽")
     top_sum.columns = ["Login", "Площадка", "Сумма"]
@@ -395,7 +402,7 @@ with st.expander("Показать все данные"):
     csv.columns = ["Дата", "Login", "Площадка", "Сумма", "Производ"]
     csv_data = csv.to_csv(index=False, sep=";").encode("utf-8-sig")
     st.download_button(
-        "️ Скачать отфильтрованные данные (CSV)",
+        "⬇️ Скачать отфильтрованные данные (CSV)",
         data=csv_data,
         file_name="dashboard_export.csv",
         mime="text/csv"
