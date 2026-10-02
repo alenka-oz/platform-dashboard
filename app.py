@@ -8,26 +8,30 @@ from datetime import timedelta
 # ============================================================
 st.set_page_config(
     page_title="Дашборд площадок",
-    page_icon="",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title(" Дашборд по площадкам и сотрудникам")
+st.title("📊 Дашборд по площадкам и сотрудникам")
 st.markdown("---")
 
 # ============================================================
 # ВШИТАЯ ССЫЛКА НА ДАННЫЕ
 # ============================================================
-DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQwCe2ojZU0gGMQ3U1ob4YDxhZW16FTeuOUCSOEj7jCDyTb6TyVTm21wwrWE62MWgr50Bglz4Ixw3E8/pub?output=csv"
+DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD75RfNHsz8YOz4L_dFIq4m7SFvAUWu45SKqw2aHRRiwCWjR1pQhx67LLFKEdsNqqWM-A/pub?output=csv"
 
 # ============================================================
 # ФУНКЦИЯ ПАРСИНГА ДАТЫ
 # ============================================================
 def parse_date(val):
-    """Парсит даты: 28/09/26 (ДД/ММ/ГГ) и 9/28/26 (ММ/ДД/ГГ)."""
+    """Парсит даты: 28/09/26, 9/28/26, 28.09.2026"""
     val = str(val).strip()
-    if val in ["nan", "NaT", "", "None", "Операционный день", "login", "площадка"]:
+    if val in ["nan", "NaT", "", "None", "Операционный день", "login", "площадка", "Сумма", "Производ"]:
+        return pd.NaT
+    
+    # Убираем разделители
+    if val.startswith("---") or val == "---":
         return pd.NaT
     
     parts = val.replace(".", "/").split("/")
@@ -63,10 +67,17 @@ def clean_number(val):
     
     s = str(val).strip()
     
-    if s in ["", "nan", "None", "—", "-", "Сумма", "Производ"]:
+    if s in ["", "nan", "None", "—", "-", "Сумма", "Производ", "Операционный день", "login", "площадка"]:
         return float('nan')
     
+    # Убираем разделители
+    if s.startswith("---") or s == "---":
+        return float('nan')
+    
+    # Убираем пробелы (тысячные разделители)
     s = s.replace(" ", "")
+    
+    # Заменяем запятую на точку (десятичный разделитель)
     s = s.replace(",", ".")
     
     try:
@@ -75,34 +86,68 @@ def clean_number(val):
         return float('nan')
 
 # ============================================================
-# ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ
+# ФУНКЦИЯ ЗАГРУЗКИ ДАННЫХ С ОТЛАДКОЙ
 # ============================================================
 @st.cache_data(ttl=300)
 def load_data(url):
-    """Загружает данные из CSV."""
+    """Загружает данные из CSV с удалением дубли шапок и отладкой."""
     try:
         df = pd.read_csv(url, encoding='utf-8')
         
+        # ОТЛАДКА
+        st.sidebar.markdown("### 📊 Отладка загрузки")
+        st.sidebar.write(f"**Всего строк в CSV:** {len(df)}")
+        st.sidebar.write(f"**Колонки:** {list(df.columns)}")
+        
+        # Удаляем дубли шапок и разделители
         if len(df.columns) >= 5:
+            first_col = df.iloc[:, 0].astype(str).str.strip()
+            # Удаляем строки где первая колонка = "Операционный день" (кроме первой строки)
+            mask_headers = (first_col == "Операционный день") & (df.index > 0)
+            # Удаляем строки-разделители
+            mask_separators = first_col.str.contains(r'^---+', na=False, regex=True)
+            df_before_remove = len(df)
+            df = df[~(mask_headers | mask_separators)].copy()
+            st.sidebar.write(f"**Удалено дубли шапок/разделителей:** {df_before_remove - len(df)}")
+            
             df = df.iloc[:, :5].copy()
             df.columns = ["date", "login", "sum", "production", "platform"]
         else:
             st.error(f"Недостаточно колонок: {len(df.columns)}")
             return None, None
         
+        # Парсим даты
         df["date"] = df["date"].apply(parse_date)
-        df = df.dropna(subset=["date"])
         
+        # Фильтруем только строки с валидной датой
+        df_before_date = len(df)
+        df = df.dropna(subset=["date"])
+        st.sidebar.write(f"**Строк после фильтрации дат:** {len(df)} из {df_before_date}")
+        
+        # Очищаем числа
         df["sum"] = df["sum"].apply(clean_number)
         df["production"] = df["production"].apply(clean_number)
         
+        # Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
         df = df[df["platform"] != "nan"]
         
+        # ОТЛАДКА: сумма до агрегации
+        sum_before_agg = df["sum"].sum()
+        st.sidebar.write(f"**Сумма до агрегации:** {sum_before_agg:,.2f} ₽")
+        st.sidebar.write(f"**Уникальных площадок:** {df['platform'].nunique()}")
+        st.sidebar.write(f"**Список площадок:** {sorted(df['platform'].unique())}")
+        
+        # Агрегация
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
             production=("production", lambda x: x.dropna().mean() if len(x.dropna()) > 0 else 0)
         ).copy()
+        
+        # ОТЛАДКА: сумма после агрегации
+        sum_after_agg = df_agg["sum"].sum()
+        st.sidebar.write(f"**Сумма после агрегации:** {sum_after_agg:,.2f} ₽")
+        st.sidebar.write(f"**Записей после агрегации:** {len(df_agg)}")
         
         return df, df_agg
     except Exception as e:
@@ -121,13 +166,13 @@ if df_raw is None or df_agg is None:
     st.stop()
 
 # ============================================================
-# ПРОВЕРКА ДАТ (КРИТИЧНО!)
+# ПРОВЕРКА ДАТ
 # ============================================================
 min_date = df_agg["date"].min()
 max_date = df_agg["date"].max()
 
 if pd.isna(min_date) or pd.isna(max_date):
-    st.error("❌ Не удалось определить диапазон дат. Проверьте формат дат в исходных данных.")
+    st.error(" Не удалось определить диапазон дат.")
     st.stop()
 
 # ============================================================
@@ -199,7 +244,7 @@ df_filtered = df_agg[
     (df_agg["login"].isin(selected_logins))
 ].copy()
 
-st.sidebar.success(f"✅ Записей: {len(df_filtered)}")
+st.sidebar.success(f"✅ Записей после фильтрации: {len(df_filtered)}")
 
 # ============================================================
 # БЛОК 1: KPI КАРТОЧКИ
@@ -223,7 +268,7 @@ st.markdown("---")
 # ============================================================
 # БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ
 # ============================================================
-st.subheader("🏢 Средний производ по площадкам")
+st.subheader(" Средний производ по площадкам")
 
 platform_stats = df_filtered.groupby("platform").agg(
     avg_production=("production", "mean"),
@@ -270,7 +315,7 @@ st.plotly_chart(fig_daily, use_container_width=True)
 col_left, col_right = st.columns(2)
 
 with col_left:
-    st.subheader("💵 Доля площадок в общей сумме")
+    st.subheader(" Доля площадок в общей сумме")
     fig_pie = px.pie(
         platform_stats,
         values="total_sum",
