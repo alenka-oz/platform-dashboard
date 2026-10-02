@@ -25,7 +25,7 @@ DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQwCe2ojZU0gG
 # ФУНКЦИЯ ПАРСИНГА ДАТЫ
 # ============================================================
 def parse_date(val):
-    """Парсит даты: 28/09/26 (ДД/ММ/ГГ), 9/28/26 (ММ/ДД/ГГ), 28.09.2026"""
+    """Парсит даты: 28/09/26, 9/28/26, 28.09.2026"""
     val = str(val).strip()
     if not val or val.lower() in ['nan', 'none', 'операционный день', 'login', 
                                     'сумма', 'производ', 'площадка', '']:
@@ -34,11 +34,9 @@ def parse_date(val):
         return pd.NaT
     
     try:
-        # Формат с точками: 28.09.2026
         if "." in val:
             return pd.to_datetime(val, dayfirst=True)
         
-        # Формат с косой чертой: 28/09/26 или 9/28/26
         if "/" in val:
             parts = val.split("/")
             if len(parts) == 3:
@@ -46,13 +44,10 @@ def parse_date(val):
                 year = 2000 + c if c < 100 else c
                 
                 if a > 12:
-                    # ДД/ММ/ГГ (например, 28/09/26)
                     return pd.Timestamp(year=year, month=b, day=a)
                 elif b > 12:
-                    # ММ/ДД/ГГ (например, 9/28/26)
                     return pd.Timestamp(year=year, month=a, day=b)
                 else:
-                    # Неоднозначно — по умолчанию ДД/ММ/ГГ
                     return pd.Timestamp(year=year, month=b, day=a)
     except:
         pass
@@ -73,19 +68,14 @@ def clean_number(val):
                                 'login', 'площадка', '']:
         return 0.0
     
-    # Убираем процент
     s = s.replace("%", "").strip()
     
-    # Если есть и точка, и запятая
     if "." in s and "," in s:
         if s.rfind(",") > s.rfind("."):
-            # Европейский формат: 1.234,56
             s = s.replace(".", "").replace(",", ".")
         else:
-            # Американский формат: 1,234.56
             s = s.replace(",", "")
     else:
-        # Только запятая или только точка
         s = s.replace(" ", "").replace(",", ".")
     
     try:
@@ -100,14 +90,11 @@ def clean_number(val):
 def load_data(url):
     """Загружает и очищает данные из CSV."""
     try:
-        # Автоопределение разделителя
         df = pd.read_csv(url, encoding='utf-8', sep=None, engine='python')
         
-        # Если всё в одной колонке — пробуем точку с запятой
         if len(df.columns) == 1:
             df = pd.read_csv(url, encoding='utf-8', sep=';')
         
-        # Удаляем дубли шапок и разделители
         first_col = df.iloc[:, 0].astype(str).str.strip().str.lower()
         garbage_mask = (
             first_col.isin(['операционный день', 'login', 'сумма', 'производ', 'площадка', '']) | 
@@ -115,7 +102,6 @@ def load_data(url):
         )
         df = df[~garbage_mask].copy()
 
-        # Переименовываем колонки
         if len(df.columns) >= 5:
             df = df.iloc[:, :5].copy()
             df.columns = ["date", "login", "sum", "production", "platform"]
@@ -123,19 +109,16 @@ def load_data(url):
             st.error(f"Недостаточно колонок: {len(df.columns)}")
             return None, None
 
-        # Парсим даты
         df["date"] = df["date"].apply(parse_date)
         df = df.dropna(subset=["date"])
 
-        # Очищаем числа
         df["sum"] = df["sum"].apply(clean_number)
         df["production"] = df["production"].apply(clean_number)
         
-        # Нормализуем площадки
         df["platform"] = df["platform"].astype(str).str.strip()
         df = df[df["platform"] != "nan"]
 
-        # Агрегация: один сотрудник + одна дата + одна площадка = одна строка
+        # АГРЕГАЦИЯ: один сотрудник + одна дата + одна площадка = одна строка
         # СУММА суммируется, ПРОИЗВОД усредняется
         df_agg = df.groupby(["date", "login", "platform"], as_index=False).agg(
             sum=("sum", "sum"),
@@ -259,23 +242,18 @@ col4.metric("📋 Записей", total_records)
 st.markdown("---")
 
 # ============================================================
-# БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ (ИСПРАВЛЕННЫЙ)
+# БЛОК 2: СРЕДНИЙ ПРОИЗВОД ПО ПЛОЩАДКАМ (В ПРОЦЕНТАХ)
 # ============================================================
 st.subheader("🏢 Средний производ по площадкам")
 
-# Шаг 1: Для каждого сотрудника за день берём СРЕДНЕЕ производство
-employee_daily = df_filtered.groupby(["date", "login", "platform"], as_index=False).agg(
-    daily_production=("production", "mean")  # Среднее за день
-)
-
-# Шаг 2: Для каждой площадки считаем среднее по всем сотрудникам и дням
-platform_stats = employee_daily.groupby("platform").agg(
-    avg_production=("daily_production", "mean"),  # Среднее по площадке
-    total_sum=("sum", "sum") if "sum" in df_filtered.columns else ("daily_production", "count"),
+# Для каждой площадки считаем СРЕДНЕЕ производство по всем сотрудникам и дням
+platform_stats = df_filtered.groupby("platform").agg(
+    avg_production=("production", "mean"),  # СРЕДНЕЕ, не сумма!
+    total_sum=("sum", "sum"),
     employees=("login", "nunique")
 ).reset_index().sort_values("avg_production", ascending=True)
 
-# Шаг 3: Переводим в проценты (production в долях: 0.98 = 98%)
+# Переводим в проценты
 platform_stats["avg_production_pct"] = platform_stats["avg_production"] * 100
 
 fig_platform = px.bar(
@@ -381,7 +359,7 @@ with col_top_sum:
     st.dataframe(top_sum, use_container_width=True, hide_index=True)
 
 with col_top_prod:
-    st.subheader(" Топ-10 по производству")
+    st.subheader("🏆 Топ-10 по производству")
     top_prod = employee_stats.nlargest(10, "avg_production")[["login", "platform", "avg_production"]].copy()
     top_prod["avg_production"] = top_prod["avg_production"].apply(lambda x: f"{x * 100:.1f}%")
     top_prod.columns = ["Login", "Площадка", "Производ"]
@@ -410,7 +388,7 @@ with st.expander("Показать все данные"):
     csv.columns = ["Дата", "Login", "Площадка", "Сумма", "Производ"]
     csv_data = csv.to_csv(index=False, sep=";").encode("utf-8-sig")
     st.download_button(
-        "⬇️ Скачать отфильтрованные данные (CSV)",
+        "️ Скачать отфильтрованные данные (CSV)",
         data=csv_data,
         file_name="dashboard_export.csv",
         mime="text/csv"
