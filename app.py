@@ -19,7 +19,7 @@ st.markdown("---")
 # ============================================================
 # ВШИТАЯ ССЫЛКА НА ДАННЫЕ
 # ============================================================
-DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTZo-jTlBdgD75RfNHsz8YOz4L_dFIq4m7SFvAUWu45SKqw2aHRRiwCWjR1pQhx67LLFKEdsNqqWM-A/pub?output=csv"
+DEFAULT_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQwCe2ojZU0gGMQ3U1ob4YDxhZW16FTeuOUCSOEj7jCDyTb6TyVTm21wwrWE62MWgr50Bglz4Ixw3E8/pub?output=csv"
 
 # ============================================================
 # ФУНКЦИЯ ПАРСИНГА ДАТЫ
