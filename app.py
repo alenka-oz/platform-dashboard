@@ -174,8 +174,6 @@ df_raw.loc[mask_raw, "sum"] = df_raw.loc[mask_raw, "sum"] * CORRECTION_FACTOR
 mask_agg = df_agg["platform"].isin(LAMODA_PLATFORMS)
 df_agg.loc[mask_agg, "sum"] = df_agg.loc[mask_agg, "sum"] * CORRECTION_FACTOR
 
-st.sidebar.info(f"🔧 Данные по Ламоде скорректированы (×{CORRECTION_FACTOR})")
-
 # ============================================================
 # ПРОВЕРКА ДАТ
 # ============================================================
