@@ -146,6 +146,14 @@ def load_data(url):
 # ============================================================
 df_raw, df_agg = load_data(DEFAULT_CSV_URL)
 
+# Создаём универсальную карту цветов на основе реальных площадок из данных
+ALL_PLATFORMS = sorted(df_agg["platform"].unique())
+FALLBACK_PALETTE = ["#34495E", "#95A5A6", "#D35400", "#16A085", "#C0392B", "#2980B9", "#E67E22", "#1ABC9C"]
+
+COLOR_MAP = {}
+for i, p in enumerate(ALL_PLATFORMS):
+    COLOR_MAP[p] = PLATFORM_COLORS.get(p, FALLBACK_PALETTE[i % len(FALLBACK_PALETTE)])
+
 if df_raw is None or df_agg is None:
     st.error("Не удалось загрузить данные")
     st.stop()
