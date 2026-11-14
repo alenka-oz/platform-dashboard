@@ -161,6 +161,22 @@ if df_raw is None or df_agg is None:
     st.stop()
 
 # ============================================================
+# КОРРЕКТИРОВКА ДАННЫХ ПО ЛАМОДЕ (×2)
+# Данные по Ламоде загружены с коэффициентом 0.5,
+# поэтому умножаем суммы на 2. Производ не трогаем.
+# ============================================================
+LAMODA_PLATFORMS = ["Ламода Софьино", "Ламода Быково"]
+CORRECTION_FACTOR = 2.0
+
+mask_raw = df_raw["platform"].isin(LAMODA_PLATFORMS)
+df_raw.loc[mask_raw, "sum"] = df_raw.loc[mask_raw, "sum"] * CORRECTION_FACTOR
+
+mask_agg = df_agg["platform"].isin(LAMODA_PLATFORMS)
+df_agg.loc[mask_agg, "sum"] = df_agg.loc[mask_agg, "sum"] * CORRECTION_FACTOR
+
+st.sidebar.info(f"🔧 Данные по Ламоде скорректированы (×{CORRECTION_FACTOR})")
+
+# ============================================================
 # ПРОВЕРКА ДАТ
 # ============================================================
 min_date = df_agg["date"].min()
