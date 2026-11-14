@@ -339,57 +339,78 @@ with col_right:
     fig_bar_emp.update_layout(showlegend=False)
     st.plotly_chart(fig_bar_emp, use_container_width=True)
 
-# БЛОК 4.5: СРЕДНИЙ ЗАРАБОТОК НА СОТРУДНИКА ПО ПЛОЩАДКАМ
-st.subheader("💼 Средний заработок на сотрудника по площадкам")
+# БЛОК 4.5: СРЕДНИЙ ДНЕВНОЙ ЗАРАБОТОК НА СОТРУДНИКА ПО ПЛОЩАДКАМ
+st.subheader("💼 Средний дневной заработок на сотрудника по площадкам")
 
-# Считаем средний заработок на человека, защищаясь от деления на ноль
-platform_stats["avg_earnings_per_emp"] = platform_stats.apply(
-    lambda row: row["total_sum"] / row["employees"] if row["employees"] > 0 else 0,
+# Шаг 1: считаем по каждому логину — сумма и количество отработанных дней
+employee_daily = df_filtered.groupby(["login", "platform"]).agg(
+    total_sum=("sum", "sum"),
+    days_worked=("date", "nunique")
+).reset_index()
+
+# Шаг 2: дневной заработок каждого сотрудника
+employee_daily["daily_earnings"] = employee_daily.apply(
+    lambda row: row["total_sum"] / row["days_worked"] if row["days_worked"] > 0 else 0,
     axis=1
 )
 
-# Сортируем по убыванию — самые прибыльные сверху
-platform_stats_sorted = platform_stats.sort_values(
-    "avg_earnings_per_emp", ascending=False
-)
+# Шаг 3: среднее по площадке (среднее дневных заработков её сотрудников)
+platform_daily = employee_daily.groupby("platform").agg(
+    avg_daily_earnings=("daily_earnings", "mean"),
+    employees=("login", "nunique"),
+    total_days=("days_worked", "sum")
+).reset_index().sort_values("avg_daily_earnings", ascending=False)
 
+# График
 fig_earnings = px.bar(
-    platform_stats_sorted,
-    x="avg_earnings_per_emp",
+    platform_daily,
+    x="avg_daily_earnings",
     y="platform",
     orientation="h",
     color="platform",
-    text="avg_earnings_per_emp",
-    title="Средний заработок на одного сотрудника (₽)",
+    text="avg_daily_earnings",
+    title="Средний дневной заработок на одного сотрудника (₽/день)",
     color_discrete_map=PLATFORM_COLORS,
-    labels={"avg_earnings_per_emp": "₽ на сотрудника", "platform": "Площадка"}
+    labels={
+        "avg_daily_earnings": "₽ в день на сотрудника",
+        "platform": "Площадка"
+    }
 )
 
-# Форматируем подписи: рубли с пробелами
 fig_earnings.update_traces(
     texttemplate="%{text:,.0f} ₽",
     textposition="outside",
-    hovertemplate="<b>%{y}</b><br>Средний заработок: %{x:,.0f} ₽<extra></extra>"
+    hovertemplate=(
+        "<b>%{y}</b><br>"
+        "Средний дневной заработок: %{x:,.0f} ₽<br>"
+        "Сотрудников: %{customdata[0]}<br>"
+        "Всего отработанных человеко-дней: %{customdata[1]:,}<extra></extra>"
+    ),
+    customdata=platform_daily[["employees", "total_days"]].values
 )
 
 fig_earnings.update_layout(
     showlegend=False,
     height=400,
-    xaxis_title="Средний заработок на сотрудника (₽)",
+    xaxis_title="Средний дневной заработок на сотрудника (₽/день)",
     yaxis={"categoryorder": "total ascending"}
 )
 
 st.plotly_chart(fig_earnings, use_container_width=True)
 
-# Табличка-сводка под графиком
+# Сводка
 st.markdown("**📊 Сводка по площадкам:**")
-summary_df = platform_stats_sorted[[
-    "platform", "employees", "total_sum", "avg_earnings_per_emp"
-]].copy()
-summary_df.columns = ["Площадка", "Сотрудников", "Общая сумма (₽)", "На сотрудника (₽)"]
-summary_df["Общая сумма (₽)"] = summary_df["Общая сумма (₽)"].apply(lambda x: f"{x:,.0f}")
-summary_df["На сотрудника (₽)"] = summary_df["На сотрудника (₽)"].apply(lambda x: f"{x:,.0f}")
-st.dataframe(summary_df, use_container_width=True, hide_index=True)
+summary_df = platform_daily.copy()
+summary_df = summary_df.rename(columns={
+    "platform": "Площадка",
+    "employees": "Сотрудников",
+    "avg_daily_earnings": "Средний дневной заработок (₽)",
+    "total_days": "Всего человеко-дней"
+})
+summary_df["Средний дневной заработок (₽)"] = summary_df["Средний дневной заработок (₽)"].apply(lambda x: f"{x:,.0f}")
+summary_df["Всего человеко-дней"] = summary_df["Всего человеко-дней"].apply(lambda x: f"{x:,}")
+st.dataframe(summary_df[["Площадка", "Сотрудников", "Средний дневной заработок (₽)", "Всего человеко-дней"]],
+             use_container_width=True, hide_index=True)
 
 # ============================================================
 # БЛОК 5: SCATTER PLOT
