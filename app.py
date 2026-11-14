@@ -339,6 +339,60 @@ with col_right:
     fig_bar_emp.update_layout(showlegend=False)
     st.plotly_chart(fig_bar_emp, use_container_width=True)
 
+============================================================
+БЛОК 4.5: СРЕДНИЙ ЗАРАБОТОК НА СОТРУДНИКА ПО ПЛОЩАДКАМ
+============================================================
+st.subheader("💼 Средний заработок на сотрудника по площадкам")
+
+# Считаем средний заработок на человека, защищаясь от деления на ноль
+platform_stats["avg_earnings_per_emp"] = platform_stats.apply(
+    lambda row: row["total_sum"] / row["employees"] if row["employees"] > 0 else 0,
+    axis=1
+)
+
+# Сортируем по убыванию — самые прибыльные сверху
+platform_stats_sorted = platform_stats.sort_values(
+    "avg_earnings_per_emp", ascending=False
+)
+
+fig_earnings = px.bar(
+    platform_stats_sorted,
+    x="avg_earnings_per_emp",
+    y="platform",
+    orientation="h",
+    color="platform",
+    text="avg_earnings_per_emp",
+    title="Средний заработок на одного сотрудника (₽)",
+    color_discrete_map=PLATFORM_COLORS,
+    labels={"avg_earnings_per_emp": "₽ на сотрудника", "platform": "Площадка"}
+)
+
+# Форматируем подписи: рубли с пробелами
+fig_earnings.update_traces(
+    texttemplate="%{text:,.0f} ₽",
+    textposition="outside",
+    hovertemplate="<b>%{y}</b><br>Средний заработок: %{x:,.0f} ₽<extra></extra>"
+)
+
+fig_earnings.update_layout(
+    showlegend=False,
+    height=400,
+    xaxis_title="Средний заработок на сотрудника (₽)",
+    yaxis={"categoryorder": "total ascending"}  # сортировка по значениям
+)
+
+st.plotly_chart(fig_earnings, use_container_width=True)
+
+# Маленькая табличка-сводка под графиком
+st.markdown("**📊 Сводка по площадкам:**")
+summary_df = platform_stats_sorted[[
+    "platform", "employees", "total_sum", "avg_earnings_per_emp"
+]].copy()
+summary_df.columns = ["Площадка", "Сотрудников", "Общая сумма (₽)", "На сотрудника (₽)"]
+summary_df["Общая сумма (₽)"] = summary_df["Общая сумма (₽)"].apply(lambda x: f"{x:,.0f}")
+summary_df["На сотрудника (₽)"] = summary_df["На сотрудника (₽)"].apply(lambda x: f"{x:,.0f}")
+st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
 # ============================================================
 # БЛОК 5: SCATTER PLOT
 # ============================================================
