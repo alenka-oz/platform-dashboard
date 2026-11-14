@@ -339,9 +339,7 @@ with col_right:
     fig_bar_emp.update_layout(showlegend=False)
     st.plotly_chart(fig_bar_emp, use_container_width=True)
 
-============================================================
-БЛОК 4.5: СРЕДНИЙ ЗАРАБОТОК НА СОТРУДНИКА ПО ПЛОЩАДКАМ
-============================================================
+# БЛОК 4.5: СРЕДНИЙ ЗАРАБОТОК НА СОТРУДНИКА ПО ПЛОЩАДКАМ
 st.subheader("💼 Средний заработок на сотрудника по площадкам")
 
 # Считаем средний заработок на человека, защищаясь от деления на ноль
@@ -378,12 +376,12 @@ fig_earnings.update_layout(
     showlegend=False,
     height=400,
     xaxis_title="Средний заработок на сотрудника (₽)",
-    yaxis={"categoryorder": "total ascending"}  # сортировка по значениям
+    yaxis={"categoryorder": "total ascending"}
 )
 
 st.plotly_chart(fig_earnings, use_container_width=True)
 
-# Маленькая табличка-сводка под графиком
+# Табличка-сводка под графиком
 st.markdown("**📊 Сводка по площадкам:**")
 summary_df = platform_stats_sorted[[
     "platform", "employees", "total_sum", "avg_earnings_per_emp"
