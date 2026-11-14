@@ -297,9 +297,7 @@ fig_daily = px.line(
 fig_daily.update_layout(height=450, yaxis_title="Производ (%)")
 st.plotly_chart(fig_daily, use_container_width=True)
 
-# ============================================================
 # БЛОК 4: РАСПРЕДЕЛЕНИЕ СУММЫ И СОТРУДНИКОВ
-# ============================================================
 col_left, col_right = st.columns(2)
 
 with col_left:
@@ -308,9 +306,10 @@ with col_left:
         platform_stats,
         values="total_sum",
         names="platform",
+        color="platform",          # ← ДОБАВИТЬ ЭТУ СТРОКУ
         title="Распределение суммы по площадкам",
         hole=0.4,
-        color_discrete_map=PLATFORM_COLORS
+        color_discrete_map=COLOR_MAP
     )
     fig_pie.update_traces(textinfo="percent+label")
     st.plotly_chart(fig_pie, use_container_width=True)
@@ -324,7 +323,7 @@ with col_right:
         color="platform",
         text="employees",
         title="Сотрудников на площадке",
-        color_discrete_map=PLATFORM_COLORS
+        color_discrete_map=COLOR_MAP
     )
     fig_bar_emp.update_traces(texttemplate="%{text}", textposition="outside")
     fig_bar_emp.update_layout(showlegend=False)
