@@ -484,7 +484,68 @@ for platform, group in emp_sums.groupby("platform"):
         "risk_level": risk
     })
 
-#
+# Создаем датафрейм и сортируем от самых рискованных к стабильным
+conc_df = pd.DataFrame(concentration_data).sort_values("top_20_revenue_share_pct", ascending=False)
+
+# === ГРАФИК ===
+fig_conc = px.bar(
+    conc_df,
+    x="top_20_revenue_share_pct",
+    y="platform",
+    orientation="h",
+    color="platform",
+    text="top_20_revenue_share_pct",
+    title="Доля выручки, которую генерируют лучшие 20% сотрудников",
+    color_discrete_map=PLATFORM_COLORS,
+    hover_data={
+        "total_employees": "Всего сотрудников", 
+        "top_20_count": "Человек в топ-20%", 
+        "risk_level": True
+    }
+)
+
+fig_conc.update_traces(
+    texttemplate="%{text:.1f}%",
+    textposition="outside",
+    hovertemplate=(
+        "<b>%{y}</b><br>"
+        "Доля выручки топ-20%: %{x:.1f}%<br>"
+        "Всего сотрудников: %{customdata[0]}<br>"
+        "Из них в топ-20%: %{customdata[1]} чел.<br>"
+        "Риск: %{customdata[2]}<extra></extra>"
+    )
+)
+
+# Добавляем вертикальную линию-порог (65% - зона высокого риска)
+fig_conc.add_vline(
+    x=65, 
+    line_dash="dash", 
+    line_color="red", 
+    annotation_text="Зона высокого риска (>65%)", 
+    annotation_position="top right"
+)
+
+fig_conc.update_layout(
+    showlegend=False,
+    height=400,
+    xaxis_title="Доля выручки топ-20% (%)",
+    xaxis=dict(range=[0, 100])  # Фиксируем шкалу от 0 до 100% для наглядности
+)
+
+st.plotly_chart(fig_conc, use_container_width=True)
+
+# === ТАБЛИЦА С ДЕТАЛИЗАЦИЕЙ ===
+st.markdown("**📊 Детализация по площадкам:**")
+display_conc = conc_df.copy()
+display_conc.columns = [
+    "Площадка", 
+    "Всего сотрудников", 
+    "Человек в топ-20%", 
+    "Доля выручки топ-20% (%)", 
+    "Уровень риска"
+]
+display_conc["Доля выручки топ-20% (%)"] = display_conc["Доля выручки топ-20% (%)"].apply(lambda x: f"{x:.1f}%")
+st.dataframe(display_conc, use_container_width=True, hide_index=True)
 
 # ============================================================
 # БЛОК 6: ТОП-10
