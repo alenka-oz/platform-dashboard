@@ -436,6 +436,57 @@ fig_scatter.update_layout(height=500, yaxis_title="Производ (%)")
 st.plotly_chart(fig_scatter, use_container_width=True)
 
 # ============================================================
+# БЛОК 5.5: КОНЦЕНТРАЦИЯ ВЫРУЧКИ (РИСК ЗАВИСИМОСТИ ОТ «ЗВЁЗД»)
+# ============================================================
+st.subheader("⚖️ Концентрация выручки: доля топ-20% сотрудников")
+st.markdown(
+    "Показывает, какой процент общей суммы площадки генерируют лучшие 20% сотрудников. "
+    "Высокое значение (>65%) означает риск: уход ключевых людей сильно ударит по результатам."
+)
+
+# 1. Считаем сумму по каждому сотруднику на каждой площадке (на основе отфильтрованных данных)
+emp_sums = df_filtered.groupby(["platform", "login"])["sum"].sum().reset_index()
+
+concentration_data = []
+
+for platform, group in emp_sums.groupby("platform"):
+    total_emp = len(group)
+    if total_emp == 0:
+        continue
+
+    # Сортируем сотрудников по убыванию суммы (от самых результативных к остальным)
+    group_sorted = group.sort_values("sum", ascending=False)
+
+    # Считаем кумулятивную (накопительную) сумму
+    group_sorted["cumsum"] = group_sorted["sum"].cumsum()
+    total_platform_sum = group_sorted["sum"].sum()
+
+    # Сколько человек составляют топ-20% (минимум 1 человек, чтобы не было 0)
+    top_20_count = max(1, round(total_emp * 0.2))
+
+    # Доля выручки, которую приносит этот топ-20%
+    top_20_revenue = group_sorted.iloc[:top_20_count]["cumsum"].max()
+    top_20_revenue_share_pct = (top_20_revenue / total_platform_sum * 100) if total_platform_sum > 0 else 0
+
+    # Оценка уровня риска
+    if top_20_revenue_share_pct > 65:
+        risk = "🔴 Высокий"
+    elif top_20_revenue_share_pct > 50:
+        risk = "🟡 Средний"
+    else:
+        risk = "🟢 Низкий (равномерная нагрузка)"
+
+    concentration_data.append({
+        "platform": platform,
+        "total_employees": total_emp,
+        "top_20_count": top_20_count,
+        "top_20_revenue_share_pct": top_20_revenue_share_pct,
+        "risk_level": risk
+    })
+
+#
+
+# ============================================================
 # БЛОК 6: ТОП-10
 # ============================================================
 col_top_sum, col_top_prod = st.columns(2)
