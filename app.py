@@ -534,19 +534,6 @@ fig_conc.update_layout(
 
 st.plotly_chart(fig_conc, use_container_width=True)
 
-# === ТАБЛИЦА С ДЕТАЛИЗАЦИЕЙ ===
-st.markdown("**📊 Детализация по площадкам:**")
-display_conc = conc_df.copy()
-display_conc.columns = [
-    "Площадка", 
-    "Всего сотрудников", 
-    "Человек в топ-20%", 
-    "Доля выручки топ-20% (%)", 
-    "Уровень риска"
-]
-display_conc["Доля выручки топ-20% (%)"] = display_conc["Доля выручки топ-20% (%)"].apply(lambda x: f"{x:.1f}%")
-st.dataframe(display_conc, use_container_width=True, hide_index=True)
-
 # ============================================================
 # БЛОК 6: ТОП-10
 # ============================================================
