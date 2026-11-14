@@ -359,7 +359,7 @@ st.plotly_chart(fig_scatter, use_container_width=True)
 col_top_sum, col_top_prod = st.columns(2)
 
 with col_top_sum:
-    st.subheader(" Топ-10 по сумме")
+    st.subheader("🏆 Топ-10 по сумме")
     top_sum = employee_stats.nlargest(10, "total_sum")[["login", "platform", "total_sum"]].copy()
     top_sum["total_sum"] = top_sum["total_sum"].apply(lambda x: f"{x:,.0f} ₽")
     top_sum.columns = ["Login", "Площадка", "Сумма"]
