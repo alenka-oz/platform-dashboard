@@ -412,20 +412,6 @@ fig_earnings.update_layout(
 
 st.plotly_chart(fig_earnings, use_container_width=True)
 
-# Сводка
-st.markdown("**📊 Сводка по площадкам:**")
-summary_df = platform_daily.copy()
-summary_df = summary_df.rename(columns={
-    "platform": "Площадка",
-    "employees": "Сотрудников",
-    "avg_daily_earnings": "Средний дневной заработок (₽)",
-    "total_days": "Всего человеко-дней"
-})
-summary_df["Средний дневной заработок (₽)"] = summary_df["Средний дневной заработок (₽)"].apply(lambda x: f"{x:,.0f}")
-summary_df["Всего человеко-дней"] = summary_df["Всего человеко-дней"].apply(lambda x: f"{x:,}")
-st.dataframe(summary_df[["Площадка", "Сотрудников", "Средний дневной заработок (₽)", "Всего человеко-дней"]],
-             use_container_width=True, hide_index=True)
-
 # ============================================================
 # БЛОК 5: SCATTER PLOT
 # ============================================================
